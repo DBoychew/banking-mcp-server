@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "banking-assistant": {
+      "command": "python",
+      "args": ["-m", "banking_mcp.server"],
+      "env": {
+        "EBANK_BASE_URL": "http://172.16.51.90:8080/EBank",
+        "EBANK_USERNAME": "",
+        "EBANK_PASSWORD": "",
+        "EBANK_LANGUAGE": "BG",
+        "EBANK_AUTH_MODE": "service",
+        "JWT_SECRET_KEY": "dev-secret-key-change-me-32-bytes-min",
+        "MCP_TRANSPORT": "stdio",
+        "MCP_TOOLS_ALLOW_MUTATIONS": "false"
+      }
+    }
+  }
+}
