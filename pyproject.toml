@@ -3,14 +3,39 @@ name = "banking-mcp-server"
 version = "1.0.0"
 requires-python = ">=3.11"
 dependencies = [
+    # MCP
     "mcp>=1.0.0",
+
+    # Web server
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+
+    # Dashboard
+    "streamlit>=1.45.0",
+    "plotly>=6.0.0",
+    "pandas>=2.0.0",
+
+    # HTTP / Async
     "httpx==0.27.0",
     "aiohttp>=3.9.0",
+
+    # Config / Validation
     "pydantic-settings>=2.0.0",
     "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+
+    # Auth
     "PyJWT==2.9.0",
     "itsdangerous>=2.1.0",
-    "python-oracledb>=2.0.0",
+    "bcrypt>=5.0.0",
+
+    # Utilities
+    "filelock>=3.13.0",
+    "numpy>=1.26.0",
+    "RestrictedPython>=7.0",
+
+    # Oracle (Фаза 2 — не се ползва още)
+    "oracledb>=2.0.0",
 ]
 
 [project.optional-dependencies]
