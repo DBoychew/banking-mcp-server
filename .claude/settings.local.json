@@ -1,0 +1,6 @@
+{
+  "enabledMcpjsonServers": [
+    "banking-assistant"
+  ],
+  "enableAllProjectMcpServers": true
+}
