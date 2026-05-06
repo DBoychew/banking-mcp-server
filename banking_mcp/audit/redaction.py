@@ -1,47 +1,27 @@
-"""PII redaction utilities for banking audit logs."""
+"""PII redaction utilities.
+
+Designed for SQL query strings and free-text error messages. Only redacts
+content inside single-quoted SQL literals to avoid noisy false-positives
+on numeric IDs, timestamps, etc.
+"""
 
 import re
 
-# IBAN: keep first 4 + last 4, mask middle
-_IBAN_RE = re.compile(r"\b([A-Z]{2}\d{2})[A-Z0-9]{4,}([A-Z0-9]{4})\b")
+# Email inside single quotes: 'user@host.tld'
+_EMAIL_RE = re.compile(r"'[^']*@[^']*\.[^']*'", re.IGNORECASE)
 
-# JWT tokens (eyJ...)
-_JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*\b")
+# Phone numbers inside single quotes (10+ digits, possibly with separators)
+_PHONE_RE = re.compile(r"'\+?[\d\s\-]{10,}'")
 
-# Basic auth header value (Basic base64...)
-_BASIC_AUTH_RE = re.compile(r"\bBasic\s+[A-Za-z0-9+/=]+", re.IGNORECASE)
-
-# Passwords / secrets in dicts — matches "password": "...", "secret": "..."
-_SECRET_KEY_RE = re.compile(
-    r'("(?:password|passwd|secret|token|api_key|authorization)"\s*:\s*")[^"]{4,}(")',
-    re.IGNORECASE,
-)
-
-# Long numeric sequences that could be card/account numbers (12+ digits)
-_LONG_NUMERIC_RE = re.compile(r"\b\d{12,}\b")
+# Long string literals inside single quotes (likely PII)
+_LONG_STR_RE = re.compile(r"'[^']{20,}'")
 
 
 def redact(text: str) -> str:
-    """Apply all PII redaction rules to a text string."""
-    text = _IBAN_RE.sub(lambda m: m.group(1) + "****" + m.group(2), text)
-    text = _JWT_RE.sub("[JWT_REDACTED]", text)
-    text = _BASIC_AUTH_RE.sub("Basic [REDACTED]", text)
-    text = _SECRET_KEY_RE.sub(r"\g<1>[REDACTED]\g<2>", text)
-    text = _LONG_NUMERIC_RE.sub("[NUM_REDACTED]", text)
+    """Redact PII from a string (SQL query or message)."""
+    if not text:
+        return text
+    text = _EMAIL_RE.sub("'<EMAIL>'", text)
+    text = _PHONE_RE.sub("'<PHONE>'", text)
+    text = _LONG_STR_RE.sub("'<REDACTED>'", text)
     return text
-
-
-def redact_dict(data: dict) -> dict:
-    """Redact sensitive values from a shallow dict (for logging tool args)."""
-    _SENSITIVE_KEYS = frozenset(
-        {"password", "passwd", "secret", "token", "api_key", "authorization", "auth"}
-    )
-    result = {}
-    for k, v in data.items():
-        if k.lower() in _SENSITIVE_KEYS:
-            result[k] = "[REDACTED]"
-        elif isinstance(v, str):
-            result[k] = redact(v)
-        else:
-            result[k] = v
-    return result
