@@ -6,20 +6,21 @@ services:
     image: banking-mcp-server:latest
     container_name: banking-mcp
     ports:
-      - "80:80"        # Nginx reverse proxy (dashboard + API)
-      - "8080:8080"    # FastAPI + MCP endpoint (direct)
-      - "8501:8501"    # Streamlit dashboard (direct)
+      - "80:80"        # Nginx reverse proxy (MCP)
+    expose:
+      - "8080"         # FastAPI + MCP, internal only (proxied by nginx)
     env_file:
       - .env
     environment:
       MCP_TRANSPORT: http
       SERVER_HOST: "0.0.0.0"
       SERVER_PORT: "8080"
-      DASHBOARD_PORT: "8501"
       AUDIT_LOG_PATH: /app/logs/audit.log
+      DATA_DIR: /app/data
       ENV: prod
     volumes:
       - ./logs:/app/logs
+      - ./data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c",
