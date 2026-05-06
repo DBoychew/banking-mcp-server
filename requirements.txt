@@ -1,3 +1,5 @@
+# Core dependencies (Oracle is the primary DB)
+
 # MCP
 mcp>=1.0.0
 
@@ -5,28 +7,40 @@ mcp>=1.0.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 
-# Dashboard
-streamlit>=1.45.0
-plotly>=6.0.0
+# Data analysis
 pandas>=2.0.0
+numpy>=1.26.0
 
-# HTTP / Async
+# HTTP (used by tests / future tools)
 httpx==0.27.0
-aiohttp>=3.9.0
 
 # Config / Validation
 pydantic-settings>=2.0.0
 pydantic>=2.0.0
 python-dotenv>=1.0.0
 
-# Utilities
-filelock>=3.13.0
-numpy>=1.26.0
+# Sandbox
 RestrictedPython>=7.0
 
-# Oracle (Фаза 2 — не се ползва още)
+# Oracle (primary DB)
 oracledb>=2.0.0
 
 # Dev
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
+
+# ---------------------------------------------------------------------------
+# Optional multi-DB drivers (uncomment per deployment):
+#
+# PostgreSQL:
+# psycopg[binary]>=3.1.0
+#
+# MySQL / MariaDB:
+# pymysql>=1.1.0
+#
+# DuckDB:
+# duckdb>=0.9.0
+#
+# ClickHouse:
+# clickhouse-connect>=0.7.0
+# ---------------------------------------------------------------------------
