@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     # -------- MCP transport --------
     # "stdio" for Claude Desktop, "http" for web clients
     MCP_TRANSPORT: str = "stdio"
+    MCP_HTTP_PATH: str = "/banking-assistant"
+    MCP_STATELESS_HTTP: bool = True
 
     # -------- Oracle DB  --------
     ORACLE_USER: str = ""
@@ -33,6 +35,23 @@ class Settings(BaseSettings):
         if v not in {"stdio", "http", "sse"}:
             raise ValueError("MCP_TRANSPORT must be one of: stdio, http, sse")
         return v
+
+    @field_validator("MCP_HTTP_PATH", mode="before")
+    def normalize_mcp_http_path(cls, v: str) -> str:
+        path = (v or "/").strip()
+        if not path or path == "/":
+            return "/"
+
+        if not path.startswith("/"):
+            path = f"/{path}"
+
+        path = path.rstrip("/")
+        if "?" in path or "#" in path:
+            raise ValueError(
+                "MCP_HTTP_PATH must be a clean URL path without query or fragment"
+            )
+
+        return path
 
 
 settings = Settings()
