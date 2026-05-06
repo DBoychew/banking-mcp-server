@@ -2,7 +2,7 @@
 Banking MCP Server - FastMCP server (MCP-only, no REST API).
 
 Architecture:
-  - FastMCP at /mcp/ (streamable HTTP)
+  - FastMCP at /mcp{MCP_HTTP_PATH} (streamable HTTP)
   - Health check at /health
 
 Run modes:
@@ -26,6 +26,15 @@ from banking_mcp.prompts import register_all_prompts
 from banking_mcp.resources import register_all_resources
 from banking_mcp.tools import register_all_tools
 
+
+def get_public_mcp_endpoint_path(mcp_http_path: str | None = None) -> str:
+    """Return the externally visible MCP endpoint path."""
+    path = settings.MCP_HTTP_PATH if mcp_http_path is None else mcp_http_path
+    if path == "/":
+        return "/mcp/"
+    return f"/mcp{path}"
+
+
 mcp = FastMCP(
     "banking-assistant",
     instructions=(
@@ -34,7 +43,8 @@ mcp = FastMCP(
         "Use execute_code with the tools object to query data and analyze results. "
         "Never invent or guess data - use only results returned by tools."
     ),
-    streamable_http_path="/",
+    streamable_http_path=settings.MCP_HTTP_PATH,
+    stateless_http=settings.MCP_STATELESS_HTTP,
 )
 
 register_all_tools(mcp)
@@ -99,7 +109,13 @@ def create_combined_app() -> FastAPI:
                 "status": "ok",
                 "version": "1.0.0",
                 "transport": settings.MCP_TRANSPORT,
-                "timestamp": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
+                "mcp_endpoint_path": get_public_mcp_endpoint_path(),
+                "stateless_http": settings.MCP_STATELESS_HTTP,
+                "timestamp": (
+                    datetime.datetime.now(datetime.UTC)
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                ),
             }
         )
 
@@ -121,7 +137,16 @@ def create_combined_app() -> FastAPI:
         include_in_schema=False,
     )
     async def mcp_redirect():
-        return RedirectResponse(url="/mcp/", status_code=307)
+        return RedirectResponse(url=get_public_mcp_endpoint_path(), status_code=307)
+
+    if settings.MCP_HTTP_PATH != "/":
+        @application.api_route(
+            "/mcp/",
+            methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            include_in_schema=False,
+        )
+        async def mcp_root_redirect():
+            return RedirectResponse(url=get_public_mcp_endpoint_path(), status_code=307)
 
     application.mount("/mcp", mcp_asgi)
 
@@ -138,10 +163,12 @@ def run_stdio() -> None:
 def run_http() -> None:
     import uvicorn
 
+    mcp_endpoint_path = get_public_mcp_endpoint_path()
+
     print("=" * 70)
     print("Banking MCP Server")
     print("=" * 70)
-    print(f"MCP endpoint: http://localhost:{settings.SERVER_PORT}/mcp/")
+    print(f"MCP endpoint: http://localhost:{settings.SERVER_PORT}{mcp_endpoint_path}")
     print(f"Health:       http://localhost:{settings.SERVER_PORT}/health")
     print("=" * 70 + "\n")
 
