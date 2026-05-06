@@ -1,11 +1,15 @@
 {
   "mcpServers": {
-    "banking-assistant": {
+    "banking-assistant-stdio": {
       "command": "python",
       "args": ["main.py", "stdio"],
       "env": {
         "MCP_TRANSPORT": "stdio"
       }
+    },
+    "banking-assistant-http": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp/banking-assistant"
     }
   }
 }
