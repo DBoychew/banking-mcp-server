@@ -18,7 +18,3 @@ Add real banking analytics only when there is a concrete use case, for example:
 - `expiry_funnel(months_ahead)`
 
 Register them via `db.add_domain_query(...)` or by editing `data/db_config.json`.
-
-## 2. Multi-DB driver dispatch is covered by unit tests
-Direct monkeypatch-based tests now cover PostgreSQL, MySQL/MariaDB, DuckDB,
-ClickHouse, and the top-level `_open_connection(...)` dispatch path.
