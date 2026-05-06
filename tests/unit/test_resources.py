@@ -27,7 +27,7 @@ def registered(monkeypatch):
     fake_db = MagicMock()
     fake_db.list_connections.return_value = ["scards", "bank_info"]
     fake_db.get_connection_info.side_effect = lambda n: {
-        "scards": {"name": "scards", "db_type": "oracle", "description": "BANKING_SCHEMA", "is_default": True},
+        "scards": {"name": "scards", "db_type": "oracle", "description": "Masked Oracle schema", "is_default": True},
         "bank_info": {"name": "bank_info", "db_type": "sqlite", "description": "Bank info", "is_default": False},
     }.get(n)
     fake_db.get_default_connection.return_value = "scards"

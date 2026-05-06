@@ -29,7 +29,7 @@ def registered_tools(monkeypatch):
     fake_db.list_connections.return_value = ["scards"]
     fake_db.get_connection_info.return_value = {
         "name": "scards", "db_type": "oracle",
-        "description": "BANKING_SCHEMA", "is_default": True,
+        "description": "Masked Oracle schema", "is_default": True,
     }
     fake_db.get_default_connection.return_value = "scards"
     fake_db.get_context_for_llm.return_value = {

@@ -2,7 +2,7 @@
 Multi-database manager for the banking MCP server.
 
 Supported db_type values:
-  - oracle      (primary - BANKING_SCHEMA)
+  - oracle      (primary masked Oracle connection)
   - sqlite
   - postgres / postgresql
   - mysql / mariadb

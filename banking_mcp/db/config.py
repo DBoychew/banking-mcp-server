@@ -66,7 +66,7 @@ class ConfigData(TypedDict, total=False):
 # Default config
 #
 # Primary (and only auto-registered) connection is the masked Oracle DEV
-# schema BANKING_SCHEMA / service_name. Additional DB types (postgres, mysql,
+# schema configured via environment variables. Additional DB types (postgres, mysql,
 # duckdb, clickhouse, sqlite) are registered at runtime via add_connection().
 # Domain queries for `scards` start empty - register real complex analytics
 # (RFM-style segmentation, transaction velocity, etc.) via add_domain_query().
@@ -78,7 +78,7 @@ def _get_default_config() -> ConfigData:
             "scards": {
                 "name": "scards",
                 "dsn": "${ORACLE_DSN}",
-                "description": "BANKING_SCHEMA - masked Oracle DEV schema (service_name)",
+                "description": "Masked Oracle DEV schema",
                 "db_type": "oracle",
                 "schema": "${ORACLE_SCHEMA}",
                 "schema_filter": {"include": [], "exclude": []},
