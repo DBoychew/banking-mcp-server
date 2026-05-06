@@ -1,17 +1,18 @@
 """
-Code Executor — RestrictedPython sandbox for safe code execution.
+Code Executor RestrictedPython sandbox for safe code execution.
 
-Mirrors petru's src/executor.py exactly, adapted for banking_mcp imports.
+Restricted execution environment adapted for banking MCP analysis.
 """
 
+import ast
 import json
-import re
-import operator
 import math
+import operator
+import re
 from typing import Any, Dict, TYPE_CHECKING
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from RestrictedPython import compile_restricted, safe_globals
 from RestrictedPython.Guards import guarded_iter_unpack_sequence, guarded_unpack_sequence
 from RestrictedPython.PrintCollector import PrintCollector
@@ -20,6 +21,12 @@ from .tools_api import BankingToolsAPI
 
 if TYPE_CHECKING:
     from .db.manager import DatabaseManager
+
+
+_IMPORT_ERROR_MESSAGE = (
+    "Imports are not allowed in execute_code (blocked: {module}). "
+    "Use preloaded `pd`, `np`, `json`, `math`, and `tools` instead."
+)
 
 
 def _inplacevar(op_str: str, x, y):
@@ -37,6 +44,13 @@ def _write_(obj):
     if isinstance(obj, (dict, list, set)):
         return obj
     return obj
+
+
+def _blocked_import(*_args, **_kwargs):
+    raise ImportError(
+        "Imports are not allowed in execute_code. "
+        "Use preloaded `pd`, `np`, `json`, `math`, and `tools` instead."
+    )
 
 
 class SafeJSON:
@@ -65,14 +79,9 @@ class CodeExecutor:
     Secure Python code executor using RestrictedPython.
 
     The sandbox exposes a `tools` object (BankingToolsAPI) with:
-      - tools.execute_sql_query(sql)          → pd.DataFrame
-      - tools.execute_domain_query(name, **p) → pd.DataFrame
-      - tools.get_accounts()                  → list[dict]
-      - tools.get_transactions(account_id, from_date, to_date) → list[dict]
-      - tools.get_fx_rates(currencies)        → list[dict]
-      - tools.accounts_df()                   → pd.DataFrame
-      - tools.transactions_df(account_id, ...) → pd.DataFrame
-      - tools.fx_rates_df()                   → pd.DataFrame
+      - tools.execute_sql_query(sql, connection=None)          -> pd.DataFrame
+      - tools.execute_domain_query(name, connection=None, **p) -> pd.DataFrame
+      - tools.get_context_for_llm(connection=None)             -> LLMContext
     """
 
     def __init__(self, db_manager: "DatabaseManager", default_connection: str | None = None):
@@ -80,8 +89,9 @@ class CodeExecutor:
 
     def _normalize_code(self, code: str) -> str:
         replacements = {
-            "‑": "-", "‐": "-", "‒": "-", "–": "-", "—": "-",
-            "‘": "'", "’": "'", "“": '"', "”": '"', " ": " ",
+            "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-",
+            "‘": "'", "’": "'", "“": '"', "”": '"',
+            " ": " ",
         }
         for uc, ac in replacements.items():
             code = code.replace(uc, ac)
@@ -97,30 +107,28 @@ class CodeExecutor:
             fixed.append(line)
         return "\n".join(fixed)
 
+    def _validate_imports(self, code: str) -> str | None:
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return None
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                blocked = ", ".join(alias.name for alias in node.names)
+                return _IMPORT_ERROR_MESSAGE.format(module=blocked)
+            if isinstance(node, ast.ImportFrom):
+                module = "." * node.level + (node.module or "")
+                return _IMPORT_ERROR_MESSAGE.format(module=module or "relative import")
+        return None
+
     def execute(self, code: str) -> Dict[str, Any]:
         try:
             code = self._normalize_code(code)
             code = self._fix_multiline_fstrings(code)
-
-            forbidden_imports = [
-                "duckdb", "sqlite3", "psycopg", "mysql", "pymongo",
-                "sqlalchemy", "subprocess", "os",
-            ]
-            for forbidden in forbidden_imports:
-                if f"import {forbidden}" in code or f"from {forbidden}" in code:
-                    return {
-                        "success": False,
-                        "error": (
-                            f"Direct database/system imports are not allowed. "
-                            f"Use the `tools` object instead.\n\n"
-                            f"Examples:\n"
-                            f"  df = tools.execute_sql_query('SELECT * FROM bank_branches')\n"
-                            f"  accounts = tools.get_accounts()\n"
-                            f"  txns = tools.get_transactions('ACC-001', '2026-01-01', '2026-04-30')\n"
-                            f"  fx = tools.get_fx_rates('USD,EUR')\n\n"
-                            f"NOT: import {forbidden}"
-                        ),
-                    }
+            import_error = self._validate_imports(code)
+            if import_error:
+                return {"success": False, "error": import_error}
 
             if "print(" in code and "result" not in code:
                 code = code.rstrip() + "\nresult = printed"
@@ -134,7 +142,7 @@ class CodeExecutor:
 
             restricted_builtins = safe_globals.copy()
             restricted_builtins.update({
-                "__import__": __import__,
+                "__import__": _blocked_import,
                 "_getattr_": getattr,
                 "_getitem_": lambda obj, index: obj[index],
                 "_getiter_": iter,
