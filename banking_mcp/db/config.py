@@ -1,5 +1,5 @@
 """
-Connection configuration management — mirrors petru's src/db/config.py.
+Connection configuration management for banking data sources.
 
 Manages database connection configs stored in data/db_config.json.
 Supports ${VAR} env var substitution in DSN strings, schema filtering,
@@ -11,7 +11,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import TypedDict
 
 from dotenv import load_dotenv
 
@@ -22,7 +22,7 @@ CONFIG_FILE = DATA_DIR / "db_config.json"
 
 
 # ---------------------------------------------------------------------------
-# TypedDicts (identical to petru)
+# TypedDicts 
 # ---------------------------------------------------------------------------
 
 class SchemaFilter(TypedDict, total=False):
@@ -50,7 +50,8 @@ class ConnectionInfo(TypedDict, total=False):
     name: str
     dsn: str
     description: str
-    db_type: str       # sqlite, oracle
+    db_type: str       # oracle, sqlite, postgres, mysql, duckdb, clickhouse
+    schema: str
     schema_filter: SchemaFilter
     is_default: bool
 
@@ -62,53 +63,29 @@ class ConfigData(TypedDict, total=False):
 
 
 # ---------------------------------------------------------------------------
-# Default config (bank_info SQLite)
+# Default config
+#
+# Primary (and only auto-registered) connection is the masked Oracle DEV
+# schema BANKING_SCHEMA / service_name. Additional DB types (postgres, mysql,
+# duckdb, clickhouse, sqlite) are registered at runtime via add_connection().
+# Domain queries for `scards` start empty - register real complex analytics
+# (RFM-style segmentation, transaction velocity, etc.) via add_domain_query().
 # ---------------------------------------------------------------------------
 
 def _get_default_config() -> ConfigData:
     return {
         "connections": {
-            "bank_info": {
-                "name": "bank_info",
-                "dsn": "${BANK_INFO_DB_PATH}",
-                "description": "Bank public information (branches, contacts, management)",
-                "db_type": "sqlite",
+            "scards": {
+                "name": "scards",
+                "dsn": "${ORACLE_DSN}",
+                "description": "BANKING_SCHEMA - masked Oracle DEV schema (service_name)",
+                "db_type": "oracle",
+                "schema": "${ORACLE_SCHEMA}",
                 "schema_filter": {"include": [], "exclude": []},
             }
         },
-        "default_connection": "bank_info",
-        "domain_queries": {
-            "bank_info": {
-                "get_branches": {
-                    "sql": "SELECT * FROM bank_branches ORDER BY city, name",
-                    "description": "List all bank branches and offices",
-                    "returns": "DataFrame with branch info",
-                    "params": [],
-                },
-                "get_branches_by_city": {
-                    "sql": "SELECT * FROM bank_branches WHERE LOWER(city) LIKE LOWER(:city) ORDER BY name",
-                    "description": "List branches in a specific city",
-                    "returns": "DataFrame with branch info filtered by city",
-                    "params": [
-                        {"name": "city", "type": "string", "description": "City name to filter by"},
-                    ],
-                },
-                "get_contacts": {
-                    "sql": "SELECT * FROM bank_contacts WHERE UPPER(language) = UPPER(:language) ORDER BY type, id",
-                    "description": "Get bank contact information (phone, email, website)",
-                    "returns": "DataFrame with contact info",
-                    "params": [
-                        {"name": "language", "type": "string", "default": "BG", "description": "Language code: BG or EN"},
-                    ],
-                },
-                "get_management": {
-                    "sql": "SELECT * FROM bank_management ORDER BY id",
-                    "description": "Get bank management board members and positions",
-                    "returns": "DataFrame with management info",
-                    "params": [],
-                },
-            }
-        },
+        "default_connection": "scards",
+        "domain_queries": {"scards": {}},
     }
 
 
@@ -125,8 +102,10 @@ def load_config() -> ConfigData:
                 if "db_type" not in conn and "type" in conn:
                     conn["db_type"] = conn.pop("type")
             return data
-        except (json.JSONDecodeError, IOError):
-            pass
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid database config JSON in {CONFIG_FILE}") from exc
+        except OSError as exc:
+            raise RuntimeError(f"Could not read database config file {CONFIG_FILE}") from exc
     config = _get_default_config()
     save_config(config)
     return config
@@ -141,7 +120,7 @@ def save_config(config: ConfigData) -> None:
 # DSN resolution
 # ---------------------------------------------------------------------------
 
-def resolve_dsn(dsn: str) -> str:
+def resolve_env_vars(value: str) -> str:
     """Substitute ${VAR} placeholders with environment variables."""
     def _replace(match: re.Match) -> str:
         var = match.group(1)
@@ -149,7 +128,12 @@ def resolve_dsn(dsn: str) -> str:
         if value is None:
             raise ValueError(f"Environment variable '{var}' is not set")
         return value
-    return re.sub(r"\$\{(\w+)\}", _replace, dsn)
+    return re.sub(r"\$\{(\w+)\}", _replace, value)
+
+
+def resolve_dsn(dsn: str) -> str:
+    """Backward-compatible alias for env var substitution in DSNs."""
+    return resolve_env_vars(dsn)
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +169,7 @@ def add_connection(
     dsn: str,
     description: str = "",
     db_type: str = "sqlite",
+    schema: str = "",
     schema_filter: SchemaFilter | None = None,
 ) -> ConnectionInfo:
     config = load_config()
@@ -198,6 +183,8 @@ def add_connection(
         "db_type": db_type,
         "schema_filter": schema_filter or {"include": [], "exclude": []},
     }
+    if schema:
+        conn["schema"] = schema
     config.setdefault("connections", {})[name] = conn
     if not config.get("default_connection"):
         config["default_connection"] = name
@@ -277,11 +264,11 @@ def filter_tables(tables: list[str], schema_filter: SchemaFilter) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Parameter parsing (petru compact format + banking list format)
+# Parameter parsing (compact format + banking list format)
 # ---------------------------------------------------------------------------
 
 def parse_compact_params(params: str | list) -> list[ParameterInfo]:
-    """Parse parameters — supports petru's compact string format and banking's list format."""
+    """Parse parameters - supports compact string format and banking's list format."""
     if isinstance(params, list):
         # Banking format: [{name, type, default, description}]
         result = []
@@ -299,7 +286,7 @@ def parse_compact_params(params: str | list) -> list[ParameterInfo]:
     if not params or not str(params).strip():
         return []
 
-    # Petru compact string format: "param=default (desc), ..."
+    # Compact string format: "param=default (desc), ..."
     import re as _re
     result = []
     param_strs = _re.split(r"\),\s*(?=\w+=)", str(params).strip())
