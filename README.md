@@ -3,7 +3,7 @@
 This server can run in two modes:
 
 - `stdio` for local desktop clients
-- `http` for web clients such as SirmaAI Studio
+- `http` for web clients 
 
 ## Local HTTP run
 
