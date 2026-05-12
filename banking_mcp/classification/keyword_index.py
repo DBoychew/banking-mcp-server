@@ -109,13 +109,39 @@ class KeywordIndex:
         self._build()
 
     def _build(self) -> None:
+        by_code: dict[str, dict[str, Any]] = {}
         for cat in categories_loader.load_categories()["categories"]:
             code = cat.get("full_code")
             if not code:
                 continue
             self._all_codes.add(code)
+            by_code[code] = cat
             for kw in cat.get("keywords_bg", []) or []:
                 folded = _fold(kw).strip()
+                if not folded:
+                    continue
+                self._by_keyword.append((folded, cat))
+
+        # Phase 6: merge merchant aliases and typo corrections.
+        overlay = categories_loader.load_merchant_aliases()
+        for entry in overlay.get("aliases", []):
+            code = entry.get("code")
+            keyword = entry.get("keyword")
+            cat = by_code.get(code) if code else None
+            if not cat or not keyword:
+                continue
+            folded = _fold(str(keyword)).strip()
+            if not folded:
+                continue
+            self._by_keyword.append((folded, cat))
+
+        for correction in overlay.get("typo_corrections", []):
+            code = correction.get("code")
+            cat = by_code.get(code) if code else None
+            if not cat:
+                continue
+            for kw in correction.get("extra_keywords", []) or []:
+                folded = _fold(str(kw)).strip()
                 if not folded:
                     continue
                 self._by_keyword.append((folded, cat))
@@ -224,8 +250,59 @@ def get_index() -> KeywordIndex:
     return KeywordIndex()
 
 
+def reload_index() -> None:
+    """Drop the classifier singleton AND the underlying taxonomy caches.
+
+    Use after editing the source JSON or the merchant-alias overlay so
+    the next classify() rebuilds the index. Also resets stats.
+    """
+    get_index.cache_clear()
+    categories_loader.reload_all()
+    from . import stats as _stats
+
+    _stats.reset()
+
+
 def classify(
-    text: str, direction: str = "auto", top_k: int = 3
+    text: str,
+    direction: str = "auto",
+    top_k: int = 3,
+    source: str = "api",
+    audit: bool = True,
 ) -> ClassificationResult:
-    """Convenience wrapper around the singleton index."""
-    return get_index().classify(text, direction=direction, top_k=top_k)
+    """Convenience wrapper around the singleton index.
+
+    Phase 6: every call is audit-logged by default and counted in stats.
+    Pass audit=False from batch paths (classify_transactions) that emit
+    their own summary record to keep audit volume bounded - the per-row
+    stats counter still fires either way so unclassified rate is accurate.
+    """
+    result = get_index().classify(text, direction=direction, top_k=top_k)
+
+    # Stats always tick - cheap, in-memory.
+    from . import stats as _stats
+
+    _stats.record(
+        direction=direction,
+        unclassified=result.unclassified,
+        payroll_pattern_hit=result.payroll_pattern_hit,
+        row_count=1,
+    )
+
+    if audit:
+        # Local import: keeps classification importable in environments
+        # where the audit module is disabled or partially configured.
+        from banking_mcp.audit import log_classification
+
+        top = result.matches[0] if result.matches else None
+        log_classification(
+            description=text or "",
+            direction=direction,
+            top_code=top.code if top else None,
+            top_score=top.score if top else 0.0,
+            unclassified=result.unclassified,
+            payroll_pattern_hit=result.payroll_pattern_hit,
+            row_count=1,
+            source=source,
+        )
+    return result

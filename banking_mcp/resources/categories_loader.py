@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 DATA_FILE = Path(__file__).parent / "data" / "transaction_categories.json"
+ALIASES_FILE = Path(__file__).parent / "data" / "merchant_aliases.json"
 
 
 def _normalize(value: Any) -> Any:
@@ -66,10 +67,31 @@ def get_counts() -> dict[str, int]:
     return dict(load_categories().get("counts", {}))
 
 
+@lru_cache(maxsize=1)
+def load_merchant_aliases() -> dict[str, Any]:
+    """Load the BG merchant-alias overlay (Phase 6 bridge for unclassified gap).
+
+    Missing file is not an error - the overlay is optional and the
+    classifier still functions on the source taxonomy alone.
+    """
+    if not ALIASES_FILE.exists():
+        return {"version": "0", "aliases": [], "typo_corrections": []}
+    raw = json.loads(ALIASES_FILE.read_text(encoding="utf-8"))
+    return _normalize(raw)
+
+
+def reload_all() -> None:
+    """Drop both caches so the next call re-reads the JSON files."""
+    load_categories.cache_clear()
+    load_merchant_aliases.cache_clear()
+
+
 __all__ = [
     "load_categories",
     "get_incoming",
     "get_outgoing",
     "get_payroll_patterns",
     "get_counts",
+    "load_merchant_aliases",
+    "reload_all",
 ]

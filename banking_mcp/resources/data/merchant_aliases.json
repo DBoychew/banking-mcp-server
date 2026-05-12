@@ -1,0 +1,82 @@
+{
+  "version": "1.0",
+  "locale": "bg_BG",
+  "description": "BG retailer / service-provider aliases that the source IRIS taxonomy does not enumerate. Maps merchant name fragments to taxonomy codes so descriptions like 'ЛИДЛ БЪЛГАРИЯ ЕООД' classify even though the taxonomy only lists generic 'хранителен магазин'. Phase 6 bridge for the Phase 3 known gap.",
+  "aliases": [
+    { "keyword": "лидл",        "code": "002001001001", "note": "groceries" },
+    { "keyword": "lidl",        "code": "002001001001", "note": "groceries" },
+    { "keyword": "кауфланд",    "code": "002001001001", "note": "groceries" },
+    { "keyword": "kaufland",    "code": "002001001001", "note": "groceries" },
+    { "keyword": "билла",       "code": "002001001001", "note": "groceries" },
+    { "keyword": "billa",       "code": "002001001001", "note": "groceries" },
+    { "keyword": "фантастико",  "code": "002001001001", "note": "groceries" },
+    { "keyword": "fantastico",  "code": "002001001001", "note": "groceries" },
+    { "keyword": "т-маркет",    "code": "002001001001", "note": "groceries" },
+    { "keyword": "т маркет",    "code": "002001001001", "note": "groceries" },
+
+    { "keyword": "макдоналдс",  "code": "002001001003", "note": "fast food" },
+    { "keyword": "mcdonald",    "code": "002001001003", "note": "fast food" },
+    { "keyword": "kfc",         "code": "002001001003", "note": "fast food" },
+    { "keyword": "burger king", "code": "002001001003", "note": "fast food" },
+    { "keyword": "subway",      "code": "002001001003", "note": "fast food" },
+    { "keyword": "happy",       "code": "002001001003", "note": "happy bar & grill chain" },
+
+    { "keyword": "starbucks",   "code": "002001001004", "note": "cafe" },
+    { "keyword": "старбъкс",    "code": "002001001004", "note": "cafe" },
+    { "keyword": "коста",       "code": "002001001004", "note": "costa coffee" },
+    { "keyword": "costa",       "code": "002001001004", "note": "costa coffee" },
+
+    { "keyword": "глово",       "code": "002001001006", "note": "food delivery" },
+    { "keyword": "glovo",       "code": "002001001006", "note": "food delivery" },
+    { "keyword": "foodpanda",   "code": "002001001006", "note": "food delivery" },
+    { "keyword": "takeaway",    "code": "002001001006", "note": "food delivery" },
+    { "keyword": "bolt food",   "code": "002001001006", "note": "food delivery" },
+
+    { "keyword": "omv",         "code": "002001002001", "note": "fuel" },
+    { "keyword": "shell",       "code": "002001002001", "note": "fuel" },
+    { "keyword": "шел",         "code": "002001002001", "note": "fuel" },
+    { "keyword": "lukoil",      "code": "002001002001", "note": "fuel" },
+    { "keyword": "лукойл",      "code": "002001002001", "note": "fuel" },
+    { "keyword": "eko",         "code": "002001002001", "note": "fuel" },
+    { "keyword": "petrol",      "code": "002001002001", "note": "fuel" },
+    { "keyword": "rompetrol",   "code": "002001002001", "note": "fuel" },
+    { "keyword": "ромпетрол",   "code": "002001002001", "note": "fuel" },
+
+    { "keyword": "bolt",        "code": "002001002002", "note": "ride-hailing" },
+    { "keyword": "uber",        "code": "002001002002", "note": "ride-hailing" },
+    { "keyword": "yellow taxi", "code": "002001002002", "note": "taxi" },
+
+    { "keyword": "bnr",         "code": "002001002004", "note": "Bulgaria Air" },
+    { "keyword": "wizzair",     "code": "002001002004", "note": "airline" },
+    { "keyword": "wizz air",    "code": "002001002004", "note": "airline" },
+    { "keyword": "ryanair",     "code": "002001002004", "note": "airline" },
+    { "keyword": "lufthansa",   "code": "002001002004", "note": "airline" },
+
+    { "keyword": "ikea",        "code": "002001003001", "note": "furniture" },
+    { "keyword": "икеа",        "code": "002001003001", "note": "furniture" },
+    { "keyword": "jysk",        "code": "002001003001", "note": "furniture" },
+
+    { "keyword": "praktiker",   "code": "002001003003", "note": "DIY / home" },
+    { "keyword": "практикер",   "code": "002001003003", "note": "DIY / home" },
+    { "keyword": "mr.bricolage","code": "002001003003", "note": "DIY / home" },
+    { "keyword": "homemax",     "code": "002001003003", "note": "DIY / home" },
+
+    { "keyword": "technopolis", "code": "002001004001", "note": "electronics" },
+    { "keyword": "технополис",  "code": "002001004001", "note": "electronics" },
+    { "keyword": "technomarket","code": "002001004001", "note": "electronics" },
+    { "keyword": "техномаркет", "code": "002001004001", "note": "electronics" },
+    { "keyword": "емаг",        "code": "002001004001", "note": "emag online" },
+    { "keyword": "emag",        "code": "002001004001", "note": "emag online" }
+  ],
+  "typo_corrections": [
+    {
+      "code": "001001006000",
+      "extra_keywords": [
+        "обезщетение безработица",
+        "обезщетение за безработица",
+        "безработица"
+      ],
+      "note": "Source taxonomy has typo 'обезщетеТие безработица'; this overlay adds correctly spelled phrases (both 'обезщетение безработица' and the formal 'обезщетение за безработица') so well-formed descriptions match."
+    }
+  ]
+}

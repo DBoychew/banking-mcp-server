@@ -138,3 +138,54 @@ def register_banking_resources(mcp) -> None:
             ensure_ascii=False,
             indent=2,
         )
+
+    @mcp.resource(
+        "banking://transaction-categories/codes",
+        mime_type="application/json",
+        description=(
+            "Flat list of valid category codes with hierarchical paths. "
+            "Use as the enum for client-side LLM structured-output fallback "
+            "when classify_description returns unclassified - the LLM picks "
+            "from this list and cannot invent a code."
+        ),
+    )
+    def transaction_categories_codes_resource() -> str:
+        cats = categories_loader.load_categories()["categories"]
+        codes = [
+            {
+                "code": cat["full_code"],
+                "direction": cat.get("direction"),
+                "leaf_name": cat.get("leaf_name"),
+                "path": " > ".join(
+                    node["name"]
+                    for key in (
+                        "main_category",
+                        "primary_category",
+                        "sub_level_1",
+                        "sub_level_2",
+                    )
+                    for node in [cat.get(key)]
+                    if node and node.get("name")
+                ),
+            }
+            for cat in cats
+            if cat.get("full_code")
+        ]
+        return json.dumps(
+            {"count": len(codes), "codes": codes}, ensure_ascii=False, indent=2
+        )
+
+    @mcp.resource(
+        "banking://classification-stats",
+        mime_type="application/json",
+        description=(
+            "In-process classification counters: total calls, unclassified "
+            "count, payroll-pattern hits, and a per-direction breakdown. "
+            "Resets on process restart - durable history lives in audit log."
+        ),
+    )
+    def classification_stats_resource() -> str:
+        # Local import to avoid an import cycle at module load.
+        from banking_mcp.classification import stats as _stats
+
+        return json.dumps(_stats.snapshot(), ensure_ascii=False, indent=2)

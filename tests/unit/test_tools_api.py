@@ -116,10 +116,10 @@ def test_classify_transactions_marks_unclassified(sample_txn_df):
     api, _ = _api()
     out = api.classify_transactions(sample_txn_df)
     row = out.set_index("txn_id")
-    # Merchant-only: known Phase 3 gap, expected unclassified.
-    assert bool(row.loc[3, "category_unclassified"]) is True
-    assert pd.isna(row.loc[3, "category_code"])
-    # NaN and whitespace descriptions must be unclassified too.
+    # Phase 6: LIDL is now classified through the alias overlay.
+    assert bool(row.loc[3, "category_unclassified"]) is False
+    assert row.loc[3, "category_code"] == "002001001001"
+    # NaN and whitespace descriptions must still be unclassified.
     assert bool(row.loc[4, "category_unclassified"]) is True
     assert bool(row.loc[5, "category_unclassified"]) is True
 
@@ -182,8 +182,8 @@ def test_classify_transactions_unclassified_rate_is_measurable(sample_txn_df):
     api, _ = _api()
     out = api.classify_transactions(sample_txn_df)
     rate = float(out["category_unclassified"].mean())
-    # 3 of 6 rows are unclassified (LIDL + NaN + whitespace).
-    assert rate == pytest.approx(0.5)
+    # Phase 6: LIDL is classified now; only NaN + whitespace remain (2 of 6).
+    assert rate == pytest.approx(2 / 6)
 
 
 def test_classify_transactions_codes_are_only_from_taxonomy(sample_txn_df):

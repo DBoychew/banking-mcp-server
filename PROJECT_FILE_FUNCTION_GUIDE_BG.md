@@ -168,14 +168,15 @@
 Предназначение: дефинира MCP tools за keyword-базирана класификация на транзакции срещу IRIS таксономията.
 
 Класове и функции:
-- `register_classification_tools()`: закача `classify_description` tool-а към FastMCP инстанцията.
-- `register_classification_tools.classify_description()`: приема `text`, `direction` (auto/incoming/outgoing), `top_k` (1–10) и връща JSON със top-K кандидата, hierarchical path, score, matched keywords, payroll hit flag и `unclassified` boolean. Грешен `direction` се връща като JSON `{error}`.
+- `register_classification_tools()`: закача `classify_description` и `reload_classification_taxonomy` tool-овете към FastMCP инстанцията.
+- `register_classification_tools.classify_description()`: приема `text`, `direction` (auto/incoming/outgoing), `top_k` (1–10) и връща JSON със top-K кандидата, hierarchical path, score, matched keywords, payroll hit flag и `unclassified` boolean. Грешен `direction` се връща като JSON `{error}`. Phase 6: source="mcp_tool" в audit записа.
+- `register_classification_tools.reload_classification_taxonomy()`: admin tool — drop-ва in-process taxonomy + merchant-alias caches и нулира classification stats. Връща `{status: ok, message}` (Phase 6).
 
 ### `banking_mcp/classification/__init__.py`
-Предназначение: централен export на classification API (`classify`, `get_index`, `ClassificationMatch`, `ClassificationResult`).
+Предназначение: централен export на classification API (`classify`, `get_index`, `reload_index`, `stats`, `ClassificationMatch`, `ClassificationResult`).
 
 ### `banking_mcp/classification/keyword_index.py`
-Предназначение: keyword индекс и matcher срещу IRIS таксономията (само BG). Build-ва се веднъж като singleton (`@lru_cache`).
+Предназначение: keyword индекс и matcher срещу IRIS таксономията (само BG). Build-ва се веднъж като singleton (`@lru_cache`). Phase 6: merge на merchant aliases + typo corrections; audit hook; stats counter.
 
 Класове и функции:
 - `ClassificationMatch`: dataclass с `code`, `leaf_name`, `path`, `direction`, `score`, `matched_keywords`. `to_dict()` сериализатор.
@@ -183,9 +184,31 @@
 - `_fold()`: lowercase + NFC normalize за case-insensitive matching.
 - `_category_path()`: builds 'Main > Primary > Sub1 > Sub2' string.
 - `_payroll_pattern_to_regex()`: превръща `PAYROLL_MM_YYYY`-style шаблон в regex с `\d{2}` / `\d{4}` за placeholder-ите.
-- `KeywordIndex`: build-ва reverse index + payroll regexes; `classify()` scoring (substring за keywords ≥4 символа, word-boundary regex за по-къси).
+- `KeywordIndex._build()`: build reverse index от source таксономия + merge на merchant_aliases.json (pre-validated срещу `by_code`) + typo corrections + payroll regexes.
+- `KeywordIndex.classify()`: substring за keywords ≥4 символа, word-boundary regex за по-къси; length-weighted scoring.
 - `get_index()`: singleton accessor.
-- `classify()`: convenience wrapper.
+- `reload_index()`: drop singleton + categories_loader caches + stats reset (Phase 6).
+- `classify()`: convenience wrapper. Phase 6: винаги тика stats counter; audit hook когато `audit=True` (default); `source` parameter за идентификация на caller-а.
+
+### `banking_mcp/classification/stats.py`
+Предназначение: thread-safe in-memory counter за classification observability (Phase 6). Resets on process restart by design.
+
+Класове и функции:
+- `_Counters`: dataclass с total, unclassified, payroll_hits, by_direction, by_direction_unclassified.
+- `record()`: бумпва counters; thread-safe чрез `threading.Lock`.
+- `snapshot()`: read-only dict с totals + computed `unclassified_rate` (per overall и per direction).
+- `reset()`: нулира всичко (callable от admin reload + от тестове).
+
+### `banking_mcp/resources/data/merchant_aliases.json`
+Предназначение: BG merchant-alias overlay (Phase 6 bridge за Phase 3 unclassified gap). Маппва имена на търговци към taxonomy codes — таксономията не enumerate-ва brand names. Включва и typo corrections за source data грешки.
+
+Структура:
+- `aliases[]`: `{keyword, code, note}` — keyword (case-folded) → category code.
+- `typo_corrections[]`: `{code, extra_keywords[], note}` — добавя коректно изписани keywords за categories с typo в source XLSX-а.
+
+### `banking_mcp/tools/classification_tools.py` (Phase 6 update)
+Допълнителни функции:
+- `register_classification_tools.reload_classification_taxonomy()`: MCP tool — извиква `reload_index()` без DB activity; връща JSON `{status: ok, message}`. Admin-facing.
 
 ### `banking_mcp/resources/__init__.py`
 Предназначение: централен registry слой за MCP resources.
@@ -206,6 +229,8 @@
 - `register_banking_resources.transaction_categories_incoming_resource()`: филтриран изглед — само входящи категории.
 - `register_banking_resources.transaction_categories_outgoing_resource()`: филтриран изглед — само изходящи категории.
 - `register_banking_resources.transaction_categories_payroll_patterns_resource()`: BG payroll description patterns.
+- `register_banking_resources.transaction_categories_codes_resource()`: flat list от 177 categories с `{code, direction, leaf_name, path}` — enum за client-side LLM structured-output fallback (Phase 6).
+- `register_banking_resources.classification_stats_resource()`: live snapshot на in-memory stats counter — total, unclassified, payroll hits, per-direction breakdown (Phase 6).
 
 ### `banking_mcp/resources/categories_loader.py`
 Предназначение: кеширан loader за IRIS таксономията. Чете `data/transaction_categories.json` веднъж, нормализира whitespace (NBSP → space, trim) и предоставя филтрирани изгледи.
@@ -216,6 +241,8 @@
 - `get_outgoing()`: списък само с категории за разходи (`direction == "outgoing"`).
 - `get_payroll_patterns()`: BG payroll description patterns за special-case payroll detection.
 - `get_counts()`: copy на `counts` блока от payload-а.
+- `load_merchant_aliases()`: `@lru_cache(maxsize=1)` — overlay с BG merchant aliases + typo corrections (Phase 6). Missing file → no-op default.
+- `reload_all()`: drop-ва и двата `lru_cache`-а (taxonomy + aliases) — извиква се от `reload_index()`.
 
 ### `banking_mcp/resources/data/transaction_categories.json`
 Предназначение: bundled package data — IRIS PSD2Hub таксономия във flat JSON. Генерира се от `scripts/convert_transaction_categories.py`. **Само BG локал** (Greek колони/patterns се филтрират при конверсия).
@@ -259,7 +286,7 @@
 - `register_banking_prompts.income_pattern_analysis()`: prompt за recurring-income detection — филтър по code `001001001000` или `payroll_pattern_hit`, consecutive-months heuristic върху payer колоната.
 
 ### `banking_mcp/audit/__init__.py`
-Предназначение: re-export модул за audit public API-то (`log_query`, `log_error`, `start`, `stop`, `redact`).
+Предназначение: re-export модул за audit public API-то (`log_query`, `log_error`, `log_classification`, `start`, `stop`, `redact`).
 
 Функции: няма локални дефиниции.
 
@@ -281,6 +308,7 @@
 - `_enqueue()`: подава запис към queue-то; ако audit е изключен, не прави нищо.
 - `_utc_iso()`: връща UTC timestamp в ISO формат със `Z` suffix.
 - `log_query()`: записва audit събитие за SQL заявка, като редактирa query/error текста и пази duration, row count и source.
+- `log_classification()`: записва audit събитие за classification call (Phase 6). PII-redacted description, verbatim taxonomy code, top_score, unclassified/payroll flags, row_count (1 за single call, N за batch summary), source identifier.
 - `log_error()`: async вариант за запис на неочаквани request-level грешки.
 
 ### `banking_mcp/db/__init__.py`
@@ -520,6 +548,29 @@
 - `test_classify_description_tool_returns_valid_json()`: end-to-end през MCP tool surface.
 - `test_classify_description_tool_clamps_top_k()`: `top_k=999` се clamp-ва до 10.
 - `test_classify_description_tool_returns_error_for_bad_direction()`: грешен direction → JSON с `error` ключ.
+
+### `tests/unit/test_classification_phase6.py`
+Предназначение: тества Phase 6 — merchant aliases, audit hook, stats counter, codes/stats resources, reload mechanism.
+
+Класове и функции:
+- `_FakeMCP`: stub с поддръжка и за `@tool` и за `@resource` decorator-и.
+- `_fresh_caches()`: autouse fixture, чисти `categories_loader` + `keyword_index` lru_cache + stats counter между тестовете.
+- `_ALIAS_CASES`: 13 описания × очаквани codes (LIDL, Kaufland, OMV, Shell, Lukoil, Bolt, Wizz Air, IKEA, Practiker, Technopolis, Emag, Glovo, Starbucks).
+- `test_merchant_alias_classifies[...]`: parametrized — за всеки случай top-1 е очакваният code, не `unclassified`.
+- `test_typo_correction_for_unemployment_benefit()`: формалното "обезщетение за безработица" сега hit-ва code `001001006000`.
+- `test_stats_increment_on_classify()`: counter тика; unclassified се отчита.
+- `test_stats_payroll_hit_counted()`: payroll pattern → `payroll_pattern_hits ≥ 1`.
+- `test_stats_per_direction_breakdown()`: incoming/outgoing/auto direction-и се отчитат отделно.
+- `test_stats_reset_zeros_counters()`: `stats.reset()` нулира.
+- `test_audit_hook_fires_for_single_classify()`: monkeypatch-нат `log_classification` записва source + top_code + unclassified.
+- `test_audit_hook_skipped_when_audit_false()`: `audit=False` потиска audit call.
+- `test_audit_hook_records_unclassified()`: unclassified result → `top_code=None` в audit.
+- `test_reload_index_rebuilds_singleton()`: `reload_index()` връща нов object.
+- `test_reload_resets_stats()`: `reload_index()` нулира и stats counter.
+- `test_reload_classification_taxonomy_tool_returns_ok()`: MCP tool връща `{status: ok}`.
+- `registered_resources()`: fixture, която регистрира resources върху fake MCP с празен fake DB.
+- `test_codes_resource_lists_all_categories()`: codes resource връща 177 entries; всеки code е 12-цифрен string; direction ∈ {incoming, outgoing}.
+- `test_classification_stats_resource_reflects_state()`: след 2 classify-call-а resource-а показва `total: 2`, `unclassified: 1`, `unclassified_rate: 0.5`.
 
 ### `tests/unit/test_prompts.py`
 Предназначение: тества prompt регистрацията и съдържанието на генерираните banking prompt-и.

@@ -140,15 +140,19 @@ def test_unclassified_for_empty_input():
     assert result.matches == []
 
 
-def test_unclassified_for_merchant_only_description():
-    """Documents the known data gap: bare merchant names are unclassified.
-
-    The taxonomy does not enumerate retailer brand names. This test pins the
-    current behavior so a future Phase 6 (LLM fallback / merchant aliases)
-    deliberately changes it.
-    """
-    result = classify("ЛИДЛ БЪЛГАРИЯ ЕООД ПЛОВДИВ")
+def test_unclassified_for_truly_random_description():
+    """Phase 6 closed the merchant-name gap via the alias overlay, but
+    descriptions with no taxonomy keyword, no alias, and no payroll layout
+    still return unclassified. This guarantees the safe fallback signal."""
+    result = classify("ZZZZ QQQQ XXX 12345 WAT")
     assert result.unclassified
+
+
+def test_merchant_alias_closes_phase3_gap():
+    """LIDL was unclassified in Phase 3; Phase 6 alias overlay must fix it."""
+    result = classify("ЛИДЛ БЪЛГАРИЯ ЕООД ПЛОВДИВ", top_k=1)
+    assert not result.unclassified
+    assert result.matches[0].code == "002001001001"  # Хранителни магазини
 
 
 def test_direction_filter_excludes_other_side():

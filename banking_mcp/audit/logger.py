@@ -174,3 +174,36 @@ async def log_error(
     if details:
         record["details"] = redact(str(details))
     _enqueue(record)
+
+
+def log_classification(
+    *,
+    description: str,
+    direction: str,
+    top_code: Optional[str],
+    top_score: float,
+    unclassified: bool,
+    payroll_pattern_hit: bool = False,
+    row_count: int = 1,
+    source: str = "unknown",
+) -> None:
+    """Record one classification call (single description or batch).
+
+    The description is PII-redacted; the code is a verbatim taxonomy value
+    and is safe to log. For batch calls (classify_transactions) callers
+    typically log once per row, but a summary call with row_count > 1 and
+    a None top_code is also acceptable for compact bulk audit.
+    """
+    record = {
+        "ts": _utc_iso(),
+        "type": "classification",
+        "description": redact(description[:500]) if description else None,
+        "direction": direction,
+        "top_code": top_code,
+        "top_score": round(float(top_score), 4),
+        "unclassified": bool(unclassified),
+        "payroll_pattern_hit": bool(payroll_pattern_hit),
+        "row_count": int(row_count),
+        "source": source,
+    }
+    _enqueue(record)

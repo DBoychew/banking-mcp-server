@@ -144,7 +144,13 @@ class BankingToolsAPI:
                     if isinstance(val, str) and val.strip():
                         direction = val.strip().lower()
 
-                result = classify(str(description), direction=direction, top_k=1)
+                # audit=False: emit one batch summary at the end instead.
+                result = classify(
+                    str(description),
+                    direction=direction,
+                    top_k=1,
+                    audit=False,
+                )
                 if result.matches:
                     top = result.matches[0]
                     codes.append(top.code)
@@ -165,6 +171,20 @@ class BankingToolsAPI:
             enriched["category_score"] = scores
             enriched["category_matched_keywords"] = matched
             enriched["category_unclassified"] = unclassified
+
+            # Phase 6: one summary audit record per batch.
+            from banking_mcp.audit import log_classification
+
+            log_classification(
+                description="<batch>",
+                direction="auto" if direction_column is None else "per-row",
+                top_code=None,
+                top_score=0.0,
+                unclassified=bool(sum(unclassified)),
+                payroll_pattern_hit=False,
+                row_count=len(enriched),
+                source="tools_api.classify_transactions",
+            )
             return enriched
         except Exception as e:
             self._last_error = str(e)

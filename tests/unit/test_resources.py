@@ -51,6 +51,8 @@ def test_all_resources_registered(registered):
         "banking://transaction-categories/incoming",
         "banking://transaction-categories/outgoing",
         "banking://transaction-categories/payroll-patterns",
+        "banking://transaction-categories/codes",
+        "banking://classification-stats",
     }
 
 
