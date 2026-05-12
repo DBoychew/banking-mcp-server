@@ -53,9 +53,11 @@ GOLDEN_CASES: list[tuple[str, str, str]] = [
 @pytest.fixture(autouse=True)
 def _reset_caches():
     categories_loader.load_categories.cache_clear()
+    categories_loader.load_merchant_aliases.cache_clear()
     get_index.cache_clear()
     yield
     categories_loader.load_categories.cache_clear()
+    categories_loader.load_merchant_aliases.cache_clear()
     get_index.cache_clear()
 
 

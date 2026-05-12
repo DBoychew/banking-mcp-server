@@ -90,7 +90,7 @@ Last updated: 2026-05-12
 - [x] Пълен test suite зелен: **192/192 PASS**.
 
 ### Известни ограничения (документирани, gating-safe)
-- **Merchant-only описания → UNCLASSIFIED.** Таксономията не съдържа имена на търговци (ЛИДЛ, OMV, БИЛЛА, КАУФЛАНД и пр.). Текущо поведение: `unclassified: true` вместо хипотеза. Pin-нато с `test_unclassified_for_merchant_only_description`. Phase 6 / merchant alias list ще запълни тази празнина.
+- **Merchant-only описания → UNCLASSIFIED.** Таксономията не съдържа имена на търговци (ЛИДЛ, OMV, БИЛЛА, КАУФЛАНД и пр.). Текущо поведение: `unclassified: true` вместо хипотеза. Pin-нато с `test_unclassified_for_truly_random_description` (Phase 3 limitation) и `test_merchant_alias_closes_phase3_gap` (Phase 6 closure). Phase 6 / merchant alias list запълни тази празнина.
 - **Typo в source данните** за code 001001006000 (`"обезщетеТие безработица"`). Не блокира Phase 3. Phase 6 data-quality follow-up.
 - **Audit log integration** не е реализирано в Phase 3 — отложено за Phase 6 заедно с LLM fallback и stats resource.
 

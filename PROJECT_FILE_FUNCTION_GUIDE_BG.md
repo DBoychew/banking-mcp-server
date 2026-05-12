@@ -254,12 +254,14 @@
 - `payroll_patterns[]`: `{pattern_group, example}` за payroll regex matching.
 
 ### `scripts/convert_transaction_categories.py`
-Предназначение: еднократен / repeatable конвертор от `Transaction Categories Iris Solutions v.1.1.xlsx` към `banking_mcp/resources/data/transaction_categories.json`. Forward-fill-ва merged-cell йерархията, разделя ключови думи и филтрира Greek съдържание.
+Предназначение: еднократен / repeatable конвертор от `Transaction Categories Iris Solutions v.1.1.xlsx` към `banking_mcp/resources/data/transaction_categories.json`. Forward-fill-ва merged-cell йерархията, разделя ключови думи (включително inline keyword-и в outgoing descriptions) и филтрира Greek съдържание.
 
 Класове и функции:
 - `_contains_greek()`: True ако в текста има Greek/Coptic codepoint.
 - `_clean()`, `_split_keywords()`, `_parse_full_code()`, `_level_from_code()`: помощни нормализатори.
-- `_parse_sheet()`: обхожда един sheet с forward-fill на hierarchy state.
+- `_KEYWORDS_IN_DESC_RE`: regex който captures keyword списъка от описания тип *"ключови думи като - X, Y, Z [и др./или ...]"*; завършва при stop phrase или край на изречение.
+- `_keywords_from_description()`: извлича inline keywords от outgoing-category descriptions (Phase 3 — outgoing категориите нямат отделна keyword колона; keyword-ите са вградени в `description`).
+- `_parse_sheet()`: обхожда един sheet с forward-fill на hierarchy state. За outgoing категории извиква `_keywords_from_description()`; за incoming чете `keywords_bg` колоната директно.
 - `_parse_payroll_patterns()`: BG-only payroll patterns от Sheet1.
 - `main()`: CLI entry point (`--src`, `--out`).
 
@@ -540,7 +542,8 @@
 - `test_top1_precision_meets_threshold()`: top-1 ≥ 80% precision invariant.
 - `test_classifier_never_invents_a_code()`: никой returned code не е извън loaded таксономията.
 - `test_unclassified_for_empty_input()`: empty/whitespace input → `unclassified: true`.
-- `test_unclassified_for_merchant_only_description()`: pin-ва документираното ограничение (merchant-only описания са unclassified — Phase 6 follow-up).
+- `test_unclassified_for_truly_random_description()`: pin-ва safe fallback signal — описание без taxonomy keyword, alias или payroll layout връща `unclassified: true`.
+- `test_merchant_alias_closes_phase3_gap()`: проверява, че Phase 6 alias overlay-ът класифицира бившия merchant-only gap (ЛИДЛ → 002001001001).
 - `test_direction_filter_excludes_other_side()`: `direction="incoming"` не връща outgoing категории.
 - `test_invalid_direction_raises()`: грешен direction → `ValueError`.
 - `test_payroll_pattern_boosts_salary_even_without_keyword()`: bare `PAYROLL_03_2026` → top-1 е code `001001001000`.

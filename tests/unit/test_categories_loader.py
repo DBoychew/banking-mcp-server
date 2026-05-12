@@ -11,8 +11,10 @@ from banking_mcp.resources import categories_loader
 def _reset_cache():
     """Clear the lru_cache between tests so file edits or monkeypatches stick."""
     categories_loader.load_categories.cache_clear()
+    categories_loader.load_merchant_aliases.cache_clear()
     yield
     categories_loader.load_categories.cache_clear()
+    categories_loader.load_merchant_aliases.cache_clear()
 
 
 def test_counts_match_phase_1():

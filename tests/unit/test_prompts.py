@@ -139,6 +139,9 @@ def test_categorize_transaction_quotes_description_and_lists_tool(registered):
     # need to remember them from elsewhere.
     assert "payroll_pattern_hit" in out
     assert "001001001000" in out
+    # Phase 6: prompt must point the LLM at the codes resource for an
+    # enum-constrained fallback so it cannot invent a code.
+    assert "banking://transaction-categories/codes" in out
 
 
 def test_categorize_transaction_defaults_to_auto_direction(registered):
