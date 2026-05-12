@@ -88,6 +88,7 @@ def register_db_tools(mcp) -> None:
             "  df = tools.execute_sql_query('SELECT * FROM cards WHERE rownum <= 10')\n"
             "  df = tools.execute_sql_query('SELECT * FROM accounts', connection='scards')\n"
             "  df = tools.execute_domain_query('some_query', param1='value')\n"
+            "  enriched = tools.classify_transactions(df, description_column='description')\n"
             "  result = df.to_dict('records')\n\n"
             "Available: pd (pandas), np (numpy), json, math."
         )
@@ -99,6 +100,8 @@ def register_db_tools(mcp) -> None:
         The `tools` object provides:
           tools.execute_sql_query(sql, connection=None)         -> pd.DataFrame
           tools.execute_domain_query(name, connection=None, **) -> pd.DataFrame
+          tools.classify_transactions(df, description_column='description',
+                                      direction_column=None)    -> pd.DataFrame
           tools.get_context_for_llm(connection=None)            -> LLMContext
 
         Save your final result to the `result` variable.

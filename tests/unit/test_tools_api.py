@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pandas as pd
+import pytest
 
 from banking_mcp.tools_api import BankingToolsAPI
 
@@ -67,3 +68,130 @@ def test_last_error_resets_on_success():
     assert api.last_error == "boom"
     api.execute_sql_query("GOOD")
     assert api.last_error is None
+
+
+# ---------------------------------------------------------------------------
+# classify_transactions (Phase 4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sample_txn_df():
+    """Mimics what execute_sql_query would return from SCARDS_O.TRANSACTIONS."""
+    return pd.DataFrame(
+        [
+            {"txn_id": 1, "amount": -42.50, "description": "РЕСТОРАНТ ХЕМИНГУЕЙ СОФИЯ"},
+            {"txn_id": 2, "amount": 1500.00, "description": "ИЗПЛАТЕНА ЗАПЛАТА СИРМА"},
+            {"txn_id": 3, "amount": -120.00, "description": "ЛИДЛ БЪЛГАРИЯ ЕООД"},
+            {"txn_id": 4, "amount": -10.00, "description": None},
+            {"txn_id": 5, "amount": -55.00, "description": "   "},
+            {"txn_id": 6, "amount": -800.00, "description": "НАЕМ АПАРТАМЕНТ"},
+        ]
+    )
+
+
+def test_classify_transactions_adds_expected_columns(sample_txn_df):
+    api, _ = _api()
+    out = api.classify_transactions(sample_txn_df)
+    expected = {
+        "category_code",
+        "category_path",
+        "category_score",
+        "category_matched_keywords",
+        "category_unclassified",
+    }
+    assert expected.issubset(out.columns)
+
+
+def test_classify_transactions_assigns_known_categories(sample_txn_df):
+    api, _ = _api()
+    out = api.classify_transactions(sample_txn_df)
+    row = out.set_index("txn_id")
+    assert row.loc[1, "category_code"] == "002001001003"  # ресторант
+    assert row.loc[2, "category_code"] == "001001001000"  # заплата
+    assert row.loc[6, "category_code"] == "001001010000"  # наем
+
+
+def test_classify_transactions_marks_unclassified(sample_txn_df):
+    api, _ = _api()
+    out = api.classify_transactions(sample_txn_df)
+    row = out.set_index("txn_id")
+    # Merchant-only: known Phase 3 gap, expected unclassified.
+    assert bool(row.loc[3, "category_unclassified"]) is True
+    assert pd.isna(row.loc[3, "category_code"])
+    # NaN and whitespace descriptions must be unclassified too.
+    assert bool(row.loc[4, "category_unclassified"]) is True
+    assert bool(row.loc[5, "category_unclassified"]) is True
+
+
+def test_classify_transactions_does_not_mutate_input(sample_txn_df):
+    api, _ = _api()
+    original_cols = list(sample_txn_df.columns)
+    api.classify_transactions(sample_txn_df)
+    assert list(sample_txn_df.columns) == original_cols
+
+
+def test_classify_transactions_returns_empty_for_empty_input():
+    api, _ = _api()
+    out = api.classify_transactions(pd.DataFrame())
+    assert out.empty
+    assert api.last_error is None
+
+
+def test_classify_transactions_returns_empty_for_none_input():
+    api, _ = _api()
+    out = api.classify_transactions(None)  # type: ignore[arg-type]
+    assert out.empty
+    assert api.last_error is None
+
+
+def test_classify_transactions_error_on_missing_description_column():
+    api, _ = _api()
+    df = pd.DataFrame([{"txn_id": 1, "amount": 1.0}])
+    out = api.classify_transactions(df, description_column="memo")
+    assert out.empty
+    assert "memo" in (api.last_error or "")
+
+
+def test_classify_transactions_error_on_missing_direction_column(sample_txn_df):
+    api, _ = _api()
+    out = api.classify_transactions(sample_txn_df, direction_column="dir")
+    assert out.empty
+    assert "dir" in (api.last_error or "")
+
+
+def test_classify_transactions_respects_direction_column():
+    """When direction is supplied per row, classifier filters by it."""
+    api, _ = _api()
+    df = pd.DataFrame(
+        [
+            # 'ресторант' only exists in the outgoing taxonomy. Forcing
+            # incoming should suppress the match for that row.
+            {"txn_id": 1, "description": "РЕСТОРАНТ ХЕМИНГУЕЙ", "dir": "incoming"},
+            {"txn_id": 2, "description": "РЕСТОРАНТ ХЕМИНГУЕЙ", "dir": "outgoing"},
+        ]
+    )
+    out = api.classify_transactions(df, direction_column="dir")
+    by_id = out.set_index("txn_id")
+    assert bool(by_id.loc[1, "category_unclassified"]) is True
+    assert by_id.loc[2, "category_code"] == "002001001003"
+
+
+def test_classify_transactions_unclassified_rate_is_measurable(sample_txn_df):
+    """The mean of category_unclassified is the simplest QA signal."""
+    api, _ = _api()
+    out = api.classify_transactions(sample_txn_df)
+    rate = float(out["category_unclassified"].mean())
+    # 3 of 6 rows are unclassified (LIDL + NaN + whitespace).
+    assert rate == pytest.approx(0.5)
+
+
+def test_classify_transactions_codes_are_only_from_taxonomy(sample_txn_df):
+    """Every non-null category_code must exist in the loaded taxonomy."""
+    from banking_mcp.classification import get_index
+
+    api, _ = _api()
+    out = api.classify_transactions(sample_txn_df)
+    known = get_index().known_codes
+    for code in out["category_code"].dropna():
+        assert code in known

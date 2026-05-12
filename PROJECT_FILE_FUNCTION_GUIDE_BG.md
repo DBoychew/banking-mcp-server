@@ -127,6 +127,7 @@
 - `BankingToolsAPI._resolve_connection()`: връща изрично подадената или default connection; при липса хвърля грешка.
 - `BankingToolsAPI.execute_sql_query()`: изпълнява read-only SQL през manager-а и връща `DataFrame`; при грешка връща празен `DataFrame`.
 - `BankingToolsAPI.execute_domain_query()`: изпълнява pre-configured domain query и използва същия error handling модел като SQL path-а.
+- `BankingToolsAPI.classify_transactions()`: hybrid enrichment — приема DataFrame, използва Phase 3 keyword index, добавя 5 нови колони (`category_code`, `category_path`, `category_score`, `category_matched_keywords`, `category_unclassified`). Не мутира input-а. Empty/None input → празен DataFrame без error. Missing column → empty + `last_error`. Per-row direction filter поддържан през `direction_column`.
 - `BankingToolsAPI.get_context_for_llm()`: връща schema, dialect hint и domain queries за prompt generation.
 - `BankingToolsAPI.last_error`: property за последната грешка, която е върната към sandbox кода.
 
@@ -415,6 +416,18 @@
 - `test_execute_domain_query_returns_empty_df_on_error()`: проверява error handling-а при липсваща/грешна domain query.
 - `test_get_context_for_llm_delegates()`: проверява, че wrapper-ът делегира към manager-а.
 - `test_last_error_resets_on_success()`: проверява, че успешен call чисти предишната грешка.
+- `sample_txn_df()`: fixture с 6 примерни транзакции (вкл. NaN и whitespace описания) за enrichment тестовете.
+- `test_classify_transactions_adds_expected_columns()`: проверява че 5-те нови колони се добавят.
+- `test_classify_transactions_assigns_known_categories()`: пин-ва category codes за restaurant / salary / rent.
+- `test_classify_transactions_marks_unclassified()`: NaN, whitespace и merchant-only → `unclassified: true`.
+- `test_classify_transactions_does_not_mutate_input()`: input DataFrame не се променя.
+- `test_classify_transactions_returns_empty_for_empty_input()`: empty input → empty output, без error.
+- `test_classify_transactions_returns_empty_for_none_input()`: `None` input → empty output, без error.
+- `test_classify_transactions_error_on_missing_description_column()`: missing column → empty + `last_error`.
+- `test_classify_transactions_error_on_missing_direction_column()`: missing direction column → empty + `last_error`.
+- `test_classify_transactions_respects_direction_column()`: per-row direction filtering работи (incoming филтрира outgoing-only keyword).
+- `test_classify_transactions_unclassified_rate_is_measurable()`: `mean()` на `category_unclassified` дава очаквания QA сигнал.
+- `test_classify_transactions_codes_are_only_from_taxonomy()`: hallucination-safe invariant — всеки върнат code ∈ known_codes.
 
 ### `tests/unit/test_server.py`
 Предназначение: тества HTTP слоя и MCP path wiring-а на FastAPI приложението.
