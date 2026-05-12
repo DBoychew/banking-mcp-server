@@ -38,25 +38,26 @@ Last updated: 2026-05-12
 
 ---
 
-## Phase 2 — MCP Resource exposure
+## Phase 2 — MCP Resource exposure ✅ ЗАВЪРШЕНА (2026-05-12)
 
 **Цел:** Таксономията да се чете през стандартен MCP resource URI, без да я hardcode-ваме в prompt-ите.
 
 ### Deliverables
-- [ ] `banking_mcp/resources/categories_loader.py` — кеширан loader на JSON-а (`functools.lru_cache`).
-- [ ] Нормализация при load: trim, NBSP → space, dedup keywords.
-- [ ] Нови ресурси в `banking_resources.py`:
+- [x] `banking_mcp/resources/categories_loader.py` — кеширан loader на JSON-а (`functools.lru_cache`).
+- [x] Нормализация при load: trim, NBSP → space.
+- [x] Нови ресурси в `banking_resources.py`:
   - `banking://transaction-categories` → пълна таксономия (JSON).
   - `banking://transaction-categories/incoming` → само входящи.
   - `banking://transaction-categories/outgoing` → само изходящи.
   - `banking://transaction-categories/payroll-patterns` → payroll patterns.
-- [ ] Update `PROJECT_FILE_FUNCTION_GUIDE_BG.md` с новите файлове.
+- [x] Update `PROJECT_FILE_FUNCTION_GUIDE_BG.md` с новите файлове.
 
 ### Acceptance criteria
-- [ ] Pytest: resource връща валиден JSON със същите counts като Phase 1.
-- [ ] Pytest: loader е singleton (повторни извиквания не препрочитат файла).
-- [ ] Manual smoke: `ReadMcpResource` от Claude Code връща смислен payload.
-- [ ] Няма промени в `tools_api.py`, `manager.py` или `db_tools.py` (изолация на промените).
+- [x] Pytest: resource връща валиден JSON със същите counts като Phase 1 (`test_transaction_categories_*`).
+- [x] Pytest: loader е singleton (`test_load_is_cached`).
+- [x] Pytest: 0 Greek codepoints в payload-а (`test_no_greek_anywhere`).
+- [x] Пълен test suite зелен: **160/160 PASS**.
+- [x] Няма промени в `tools_api.py`, `manager.py` или `db_tools.py` (изолация на промените).
 
 ### Out of scope (нарочно)
 - Никаква класификационна логика.
@@ -188,9 +189,9 @@ Last updated: 2026-05-12
 
 | Phase | Status | Owner | Notes |
 |---|---|---|---|
-| 1 — Foundation | ✅ DONE | Claude + DBoychew | JSON генериран, committed pending |
-| 2 — MCP Resource | ⏳ NEXT | — | Стартираме след approve |
-| 3 — Classify tool | 🔒 LOCKED | — | Чака Phase 2 |
+| 1 — Foundation | ✅ DONE | Claude + DBoychew | Commit `66eb7ce`, BG-only |
+| 2 — MCP Resource | ✅ DONE | Claude + DBoychew | 160/160 tests PASS |
+| 3 — Classify tool | ⏳ NEXT | — | Стартираме след approve |
 | 4 — Domain query | 🔒 LOCKED | — | Чака Phase 3 + Oracle мрежа |
 | 5 — Prompts | 🔒 LOCKED | — | Чака Phase 4 |
 | 6 — Audit/observability | 🔒 LOCKED | — | Чака Phase 5 |

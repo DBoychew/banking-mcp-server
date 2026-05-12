@@ -40,13 +40,17 @@ def registered(monkeypatch):
     return fake_mcp, fake_db
 
 
-def test_four_resources_registered(registered):
+def test_all_resources_registered(registered):
     fake_mcp, _ = registered
     assert set(fake_mcp.resources.keys()) == {
         "banking://databases",
         "banking://schema/{connection}",
         "banking://domain-queries/{connection}",
         "banking://dialects",
+        "banking://transaction-categories",
+        "banking://transaction-categories/incoming",
+        "banking://transaction-categories/outgoing",
+        "banking://transaction-categories/payroll-patterns",
     }
 
 
@@ -100,3 +104,43 @@ def test_dialects_resource_lists_all_supported(registered):
         "duckdb",
         "clickhouse",
     }.issubset(out.keys())
+
+
+def test_transaction_categories_full_resource(registered):
+    fake_mcp, _ = registered
+    out = json.loads(fake_mcp.resources["banking://transaction-categories"]())
+    assert out["locale"] == "bg_BG"
+    assert out["counts"]["incoming"] == 55
+    assert out["counts"]["outgoing"] == 122
+    assert isinstance(out["categories"], list)
+
+
+def test_transaction_categories_incoming_resource(registered):
+    fake_mcp, _ = registered
+    out = json.loads(
+        fake_mcp.resources["banking://transaction-categories/incoming"]()
+    )
+    assert out["direction"] == "incoming"
+    assert out["count"] == 55
+    assert all(c["direction"] == "incoming" for c in out["categories"])
+
+
+def test_transaction_categories_outgoing_resource(registered):
+    fake_mcp, _ = registered
+    out = json.loads(
+        fake_mcp.resources["banking://transaction-categories/outgoing"]()
+    )
+    assert out["direction"] == "outgoing"
+    assert out["count"] == 122
+    assert all(c["direction"] == "outgoing" for c in out["categories"])
+
+
+def test_transaction_categories_payroll_patterns_resource(registered):
+    fake_mcp, _ = registered
+    out = json.loads(
+        fake_mcp.resources["banking://transaction-categories/payroll-patterns"]()
+    )
+    assert out["count"] == 5
+    assert all(
+        "pattern_group" in p and "example" in p for p in out["patterns"]
+    )
