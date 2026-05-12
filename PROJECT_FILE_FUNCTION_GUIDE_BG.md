@@ -152,7 +152,7 @@
 Предназначение: централен registry слой за всички MCP tools.
 
 Класове и функции:
-- `register_all_tools()`: регистрира tool пакетите, в момента само database tools.
+- `register_all_tools()`: регистрира database tools и classification tools.
 
 ### `banking_mcp/tools/db_tools.py`
 Предназначение: дефинира MCP tools, които expose-ват database context и sandbox анализ.
@@ -162,6 +162,29 @@
 - `register_db_tools.list_databases()`: връща JSON списък с наличните връзки, type, description и default flag.
 - `register_db_tools.get_database_context()`: връща JSON с schema, domain queries и dialect hint за избрана или default връзка.
 - `register_db_tools.execute_code()`: изпълнява Python код през `CodeExecutor` и връща сериализиран резултат или текстова грешка.
+
+### `banking_mcp/tools/classification_tools.py`
+Предназначение: дефинира MCP tools за keyword-базирана класификация на транзакции срещу IRIS таксономията.
+
+Класове и функции:
+- `register_classification_tools()`: закача `classify_description` tool-а към FastMCP инстанцията.
+- `register_classification_tools.classify_description()`: приема `text`, `direction` (auto/incoming/outgoing), `top_k` (1–10) и връща JSON със top-K кандидата, hierarchical path, score, matched keywords, payroll hit flag и `unclassified` boolean. Грешен `direction` се връща като JSON `{error}`.
+
+### `banking_mcp/classification/__init__.py`
+Предназначение: централен export на classification API (`classify`, `get_index`, `ClassificationMatch`, `ClassificationResult`).
+
+### `banking_mcp/classification/keyword_index.py`
+Предназначение: keyword индекс и matcher срещу IRIS таксономията (само BG). Build-ва се веднъж като singleton (`@lru_cache`).
+
+Класове и функции:
+- `ClassificationMatch`: dataclass с `code`, `leaf_name`, `path`, `direction`, `score`, `matched_keywords`. `to_dict()` сериализатор.
+- `ClassificationResult`: dataclass с `input`, `matches[]`, `payroll_pattern_hit`, derived `unclassified`. `to_dict()` сериализатор.
+- `_fold()`: lowercase + NFC normalize за case-insensitive matching.
+- `_category_path()`: builds 'Main > Primary > Sub1 > Sub2' string.
+- `_payroll_pattern_to_regex()`: превръща `PAYROLL_MM_YYYY`-style шаблон в regex с `\d{2}` / `\d{4}` за placeholder-ите.
+- `KeywordIndex`: build-ва reverse index + payroll regexes; `classify()` scoring (substring за keywords ≥4 символа, word-boundary regex за по-къси).
+- `get_index()`: singleton accessor.
+- `classify()`: convenience wrapper.
 
 ### `banking_mcp/resources/__init__.py`
 Предназначение: централен registry слой за MCP resources.
@@ -457,6 +480,30 @@
 - `test_load_is_cached()`: повторни извиквания връщат същия object.
 - `test_every_category_has_full_code_and_main()`: invariant за схемата.
 - `test_missing_data_file_raises()`: ясен `FileNotFoundError` при липсващ JSON.
+
+### `tests/unit/test_classification.py`
+Предназначение: тества keyword index, matcher и `classify_description` tool с golden fixture.
+
+Класове и функции:
+- `GOLDEN_CASES`: 17 примера (description → expected_code → direction) покриващи incoming income/financing + outgoing food/leisure/home.
+- `_reset_caches()`: autouse fixture, чисти и `categories_loader` и `get_index` кеша между тестовете.
+- `_FakeMCP`: stub за MCP tool registry.
+- `test_index_is_cached_singleton()`: `get_index()` връща същия object.
+- `test_index_contains_all_taxonomy_codes()`: `KeywordIndex.known_codes` покрива пълната таксономия.
+- `test_payroll_pattern_compiles_to_digit_regex()`: `PAYROLL_MM_YYYY` → regex с `\d{2}_\d{4}`.
+- `test_payroll_pattern_handles_empty_input()`: празен pattern → `None`.
+- `test_top3_contains_expected[...]`: parametrized — за всеки golden case top-3 трябва да съдържа expected code.
+- `test_top1_precision_meets_threshold()`: top-1 ≥ 80% precision invariant.
+- `test_classifier_never_invents_a_code()`: никой returned code не е извън loaded таксономията.
+- `test_unclassified_for_empty_input()`: empty/whitespace input → `unclassified: true`.
+- `test_unclassified_for_merchant_only_description()`: pin-ва документираното ограничение (merchant-only описания са unclassified — Phase 6 follow-up).
+- `test_direction_filter_excludes_other_side()`: `direction="incoming"` не връща outgoing категории.
+- `test_invalid_direction_raises()`: грешен direction → `ValueError`.
+- `test_payroll_pattern_boosts_salary_even_without_keyword()`: bare `PAYROLL_03_2026` → top-1 е code `001001001000`.
+- `test_longer_keyword_outranks_shorter_overlap()`: 'ипотечен кредит' побеждава 'ипотечен' при overlap.
+- `test_classify_description_tool_returns_valid_json()`: end-to-end през MCP tool surface.
+- `test_classify_description_tool_clamps_top_k()`: `top_k=999` се clamp-ва до 10.
+- `test_classify_description_tool_returns_error_for_bad_direction()`: грешен direction → JSON с `error` ключ.
 
 ### `tests/unit/test_prompts.py`
 Предназначение: тества prompt регистрацията и съдържанието на генерираните banking prompt-и.

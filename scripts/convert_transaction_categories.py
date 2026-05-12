@@ -80,6 +80,33 @@ def _split_keywords(raw: str | None) -> list[str]:
     return out
 
 
+# Captures the keyword list embedded in BG descriptions:
+#   "В описанието се съдържа ключови думи като - X, Y, Z [и др./или ...]"
+# The list ends at the first stop phrase or end of sentence.
+_KEYWORDS_IN_DESC_RE = re.compile(
+    r"ключови\s+думи\s+(?:като|като\s*:)\s*[-–—:]?\s*"
+    r"(?P<list>.+?)"
+    r"(?:\s+и\s+др\b|\s+и\s+имена\b|\s+или\s+плащ|\.\s|$)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _keywords_from_description(description: str | None) -> list[str]:
+    """Extract inline keywords from outgoing-category descriptions.
+
+    Outgoing entries in the source workbook do not have a dedicated keyword
+    column. Instead, the seed keywords are embedded in the description as
+    'ключови думи като - X, Y, Z'. This helper teases them out so Phase 3
+    matching can use the same keyword index for both directions.
+    """
+    if not description:
+        return []
+    match = _KEYWORDS_IN_DESC_RE.search(description)
+    if not match:
+        return []
+    return _split_keywords(match.group("list"))
+
+
 def _parse_full_code(raw: str | None) -> str | None:
     if not raw:
         return None
@@ -153,8 +180,11 @@ def _parse_sheet(
 
         kw_bg_raw = _clean(row.iloc[COL_KEYWORDS_BG]) if has_kw_column else None
 
-        # For outgoing the keywords live inline in the sub2 description.
-        keywords_bg = _split_keywords(kw_bg_raw)
+        if has_kw_column:
+            keywords_bg = _split_keywords(kw_bg_raw)
+        else:
+            # Outgoing: keywords are embedded in the description.
+            keywords_bg = _keywords_from_description(sub2_desc)
 
         entry: dict = {
             "full_code": full_code,
