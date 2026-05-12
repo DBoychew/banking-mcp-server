@@ -95,7 +95,9 @@ class BankingToolsAPI:
             df: input DataFrame; must contain ``description_column``.
             description_column: name of the free-text description column.
             direction_column: optional column holding 'incoming'/'outgoing' per
-                row. When None, classification runs in 'auto' mode.
+                row. When None, classification runs in 'auto' mode. Per-row
+                values outside the allowed set silently fall back to 'auto'
+                so a single bad value never poisons the whole batch.
 
         Returns:
             A new DataFrame (original is not mutated) with five extra columns.
@@ -106,6 +108,8 @@ class BankingToolsAPI:
         # Imported lazily so the API module does not pull the taxonomy at
         # import time. The classifier is itself a singleton.
         from banking_mcp.classification import classify
+
+        allowed_directions = {"auto", "incoming", "outgoing"}
 
         try:
             self._last_error = None
@@ -142,7 +146,12 @@ class BankingToolsAPI:
                 if direction_column is not None:
                     val = row[direction_column]
                     if isinstance(val, str) and val.strip():
-                        direction = val.strip().lower()
+                        candidate = val.strip().lower()
+                        if candidate in allowed_directions:
+                            direction = candidate
+                        # Unknown values (e.g. 'CRD', 'DBT', 'IN', 'OUT') fall
+                        # back to 'auto'. Refusing per row would let one bad
+                        # value void the whole batch (Bug A, Phase 6 audit).
 
                 # audit=False: emit one batch summary at the end instead.
                 result = classify(

@@ -195,3 +195,55 @@ def test_classify_transactions_codes_are_only_from_taxonomy(sample_txn_df):
     known = get_index().known_codes
     for code in out["category_code"].dropna():
         assert code in known
+
+
+def test_classify_transactions_falls_back_to_auto_on_unknown_direction():
+    """Phase 6 audit Bug A: one row with an unknown direction value (e.g. the
+    Oracle credit/debit markers 'CRD' / 'DBT') must NOT void the whole batch.
+    Unknown direction values fall back to 'auto' per row.
+    """
+    api, _ = _api()
+    df = pd.DataFrame(
+        [
+            {"txn_id": 1, "description": "ИЗПЛАТЕНА ЗАПЛАТА", "dir": "incoming"},
+            {"txn_id": 2, "description": "РЕСТОРАНТ ХЕМИНГУЕЙ", "dir": "outgoing"},
+            {"txn_id": 3, "description": "ЛИДЛ БЪЛГАРИЯ", "dir": "CRD"},
+            {"txn_id": 4, "description": "OMV BG", "dir": "DBT"},
+            {"txn_id": 5, "description": "ИКЕА СОФИЯ", "dir": ""},
+        ]
+    )
+    out = api.classify_transactions(df, direction_column="dir")
+
+    # No batch-level error and the result still has every input row.
+    assert api.last_error is None
+    assert len(out) == 5
+
+    # Each bad-direction row still classifies via the 'auto' fallback.
+    by_id = out.set_index("txn_id")
+    assert by_id.loc[1, "category_code"] == "001001001000"  # salary
+    assert by_id.loc[2, "category_code"] == "002001001003"  # restaurant
+    assert by_id.loc[3, "category_code"] == "002001001001"  # LIDL -> groceries
+    assert by_id.loc[4, "category_code"] == "002001002001"  # OMV  -> fuel
+    # Empty direction string also falls back to auto.
+    assert bool(by_id.loc[5, "category_unclassified"]) is False
+
+
+def test_classify_transactions_direction_filter_still_enforced_when_valid():
+    """The fallback only kicks in for *unknown* values; a valid direction
+    still filters as before."""
+    api, _ = _api()
+    df = pd.DataFrame(
+        [
+            # 'ресторант' lives only in the outgoing taxonomy; forcing
+            # incoming must suppress the match.
+            {"txn_id": 1, "description": "РЕСТОРАНТ", "dir": "incoming"},
+            {"txn_id": 2, "description": "РЕСТОРАНТ", "dir": "outgoing"},
+            {"txn_id": 3, "description": "РЕСТОРАНТ", "dir": "CRD"},  # unknown -> auto
+        ]
+    )
+    out = api.classify_transactions(df, direction_column="dir")
+    by_id = out.set_index("txn_id")
+    assert bool(by_id.loc[1, "category_unclassified"]) is True
+    assert by_id.loc[2, "category_code"] == "002001001003"
+    # 'auto' fallback finds the outgoing match.
+    assert by_id.loc[3, "category_code"] == "002001001003"
