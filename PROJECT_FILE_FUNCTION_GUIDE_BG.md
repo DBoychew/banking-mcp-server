@@ -254,6 +254,9 @@
 - `register_banking_prompts.compare_periods()`: генерира prompt за сравнение на метрика между два периода.
 - `register_banking_prompts.data_quality_check()`: генерира prompt за NULL ratio, duplicate check и базови anomaly hints.
 - `register_banking_prompts.sql_helper()`: генерира prompt, който превежда естествен език към диалектно коректен SELECT и го изпълнява.
+- `register_banking_prompts.categorize_transaction()`: prompt за класификация на единично описание срещу IRIS таксономията — инструктира LLM-а да вика `classify_description` tool-а, отказва се от гадаене при `unclassified`, споменава `payroll_pattern_hit` и salary code `001001001000`.
+- `register_banking_prompts.spending_breakdown_by_category()`: prompt за разходи per category за един customer в date range — fetch → `tools.classify_transactions` enrichment → group by `category_path` → флаг при unclassified rate > 30%.
+- `register_banking_prompts.income_pattern_analysis()`: prompt за recurring-income detection — филтър по code `001001001000` или `payroll_pattern_hit`, consecutive-months heuristic върху payer колоната.
 
 ### `banking_mcp/audit/__init__.py`
 Предназначение: re-export модул за audit public API-то (`log_query`, `log_error`, `start`, `stop`, `redact`).
@@ -527,7 +530,7 @@
 - `FakeMCP.prompt()`: имитира `@mcp.prompt(...)` decorator factory.
 - `FakeMCP.prompt.decorator()`: записва prompt функцията под нейното име.
 - `registered()`: fixture, която регистрира prompt-овете върху fake MCP с mock context.
-- `test_five_prompts_registered()`: проверява, че са регистрирани точно пет banking prompt-а.
+- `test_all_prompts_registered()`: проверява, че са регистрирани всички осем banking prompt-а (5 базови + 3 от Phase 5).
 - `test_database_overview_includes_schema_and_dialect()`: проверява, че overview prompt-ът инжектира schema и dialect.
 - `test_database_overview_uses_default_when_no_arg()`: проверява default connection поведението.
 - `test_database_overview_uses_explicit_connection()`: проверява explicit connection path-а.
@@ -537,6 +540,14 @@
 - `test_sql_helper_quotes_question()`: проверява, че natural-language въпросът се вгражда коректно.
 - `test_prompt_handles_missing_connection_gracefully()`: проверява graceful fallback при липсваща default връзка.
 - `test_prompt_handles_context_failure()`: проверява fallback текста при грешка в `get_context_for_llm()`.
+- `test_categorize_transaction_quotes_description_and_lists_tool()`: проверява quoted description, tool reference, споменаване на `unclassified`, `payroll_pattern_hit` и salary code.
+- `test_categorize_transaction_defaults_to_auto_direction()`: default direction filter = `auto`.
+- `test_categorize_transaction_respects_explicit_direction()`: explicit direction override работи.
+- `test_spending_breakdown_includes_schema_and_tool_call()`: customer + dates plumbed, schema rendered, `tools.classify_transactions` instruction, category columns named, `last_error` контракт.
+- `test_spending_breakdown_uses_default_connection()`: ползва default connection при празен аргумент.
+- `test_income_pattern_analysis_references_salary_code_and_heuristic()`: код `001001001000`, consecutive-months heuristic, и двата tool references.
+- `test_income_pattern_analysis_default_months_is_six()`: default lookback = 6 месеца.
+- `test_phase5_prompts_render_when_no_connection()`: graceful "no connection configured" fallback за новите prompt-и.
 
 ### `tests/unit/test_redaction.py`
 Предназначение: тества PII redaction правилата.

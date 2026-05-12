@@ -38,7 +38,7 @@ def registered(monkeypatch):
     return fake_mcp, fake_db
 
 
-def test_five_prompts_registered(registered):
+def test_all_prompts_registered(registered):
     fake_mcp, _ = registered
     assert set(fake_mcp.prompts.keys()) == {
         "database_overview",
@@ -46,6 +46,9 @@ def test_five_prompts_registered(registered):
         "compare_periods",
         "data_quality_check",
         "sql_helper",
+        "categorize_transaction",
+        "spending_breakdown_by_category",
+        "income_pattern_analysis",
     }
 
 
@@ -119,3 +122,95 @@ def test_prompt_handles_context_failure(registered):
     db.get_context_for_llm.side_effect = ValueError("schema fetch failed")
     out = fake_mcp.prompts["analyze_table"]("cards")
     assert "failed to load context" in out
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 prompts
+# ---------------------------------------------------------------------------
+
+
+def test_categorize_transaction_quotes_description_and_lists_tool(registered):
+    fake_mcp, _ = registered
+    out = fake_mcp.prompts["categorize_transaction"]("ЛИДЛ БЪЛГАРИЯ", top_k=2)
+    assert "'ЛИДЛ БЪЛГАРИЯ'" in out
+    assert "classify_description" in out
+    assert "unclassified" in out
+    # Mentions both the boost and the salary code so the LLM does not
+    # need to remember them from elsewhere.
+    assert "payroll_pattern_hit" in out
+    assert "001001001000" in out
+
+
+def test_categorize_transaction_defaults_to_auto_direction(registered):
+    fake_mcp, _ = registered
+    out = fake_mcp.prompts["categorize_transaction"]("anything")
+    assert "Direction filter: auto" in out
+
+
+def test_categorize_transaction_respects_explicit_direction(registered):
+    fake_mcp, _ = registered
+    out = fake_mcp.prompts["categorize_transaction"]("anything", direction="outgoing")
+    assert "Direction filter: outgoing" in out
+
+
+def test_spending_breakdown_includes_schema_and_tool_call(registered):
+    fake_mcp, _ = registered
+    out = fake_mcp.prompts["spending_breakdown_by_category"](
+        customer_id="12345",
+        from_date="2026-01-01",
+        to_date="2026-03-31",
+    )
+    # Customer + date range plumbed through.
+    assert "12345" in out
+    assert "2026-01-01" in out and "2026-03-31" in out
+    # The prompt must direct the LLM to enrich via the Phase 4 method.
+    assert "tools.classify_transactions" in out
+    # And surface the category columns the method produces.
+    assert "category_path" in out
+    assert "category_unclassified" in out
+    # Error handling note must be present (last_error contract).
+    assert "tools.last_error" in out
+    # Schema block must be rendered so the LLM does not invent table names.
+    assert "accounts:" in out
+
+
+def test_spending_breakdown_uses_default_connection(registered):
+    fake_mcp, db = registered
+    fake_mcp.prompts["spending_breakdown_by_category"](
+        customer_id="12345",
+        from_date="2026-01-01",
+        to_date="2026-03-31",
+    )
+    db.get_context_for_llm.assert_called_with("scards")
+
+
+def test_income_pattern_analysis_references_salary_code_and_heuristic(registered):
+    fake_mcp, _ = registered
+    out = fake_mcp.prompts["income_pattern_analysis"](
+        customer_id="12345", months=3
+    )
+    assert "12345" in out
+    assert "3 months" in out
+    # The taxonomy code must appear so the LLM filters by it instead of
+    # inventing a category.
+    assert "001001001000" in out
+    # The consecutive-months heuristic must be spelled out.
+    assert "consecutive months" in out
+    # Tool reference + error handling note.
+    assert "tools.classify_transactions" in out
+    assert "tools.last_error" in out
+
+
+def test_income_pattern_analysis_default_months_is_six(registered):
+    fake_mcp, _ = registered
+    out = fake_mcp.prompts["income_pattern_analysis"](customer_id="12345")
+    assert "last 6 months" in out
+
+
+def test_phase5_prompts_render_when_no_connection(registered):
+    fake_mcp, db = registered
+    db.get_default_connection.return_value = None
+    out = fake_mcp.prompts["spending_breakdown_by_category"](
+        customer_id="1", from_date="2026-01-01", to_date="2026-01-31"
+    )
+    assert "no connection configured" in out
