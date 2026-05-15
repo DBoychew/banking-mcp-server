@@ -1,7 +1,6 @@
 """Dynamic Streamlit dashboards exposed via MCP tools.
 
-Mirrors the architecture of ``petru/pulse-mcp-master/src/dashboard``:
-widgets are Python snippets that use the shared ``tools`` object, state is
+Widgets are Python snippets that use the shared ``tools`` object, state is
 persisted to ``data/dashboards/<id>/state.json``, and a Streamlit app is
 regenerated on every change.
 """

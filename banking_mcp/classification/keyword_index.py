@@ -25,6 +25,7 @@ from banking_mcp.resources import categories_loader
 SALARY_CODE = "001001001000"
 PAYROLL_BOOST = 5.0
 SHORT_KEYWORD_LEN = 4  # below this, require word boundaries to avoid false hits
+PREFIX_BOOST = 2.0  # added when a keyword is the leading token of the description
 
 
 @dataclass(frozen=True)
@@ -163,6 +164,17 @@ class KeywordIndex:
         pattern = rf"(?<![\w]){re.escape(keyword)}(?![\w])"
         return re.search(pattern, folded_text) is not None
 
+    def _is_prefix_match(self, folded_text: str, keyword: str) -> bool:
+        # Transaction feeds typically lead with the transaction type
+        # ('АТМ ...', 'ПРЕВОД ...'); that prefix is a much stronger signal
+        # than the same keyword appearing deeper in the merchant string.
+        if not folded_text.startswith(keyword):
+            return False
+        if len(folded_text) == len(keyword):
+            return True
+        nxt = folded_text[len(keyword)]
+        return not (nxt.isalnum() or nxt == "_")
+
     def classify(
         self,
         text: str,
@@ -188,6 +200,8 @@ class KeywordIndex:
             code = cat["full_code"]
             # Longer keywords are more specific -> higher weight.
             weight = max(1.0, len(keyword) / 5.0)
+            if self._is_prefix_match(folded, keyword):
+                weight += PREFIX_BOOST
             entry = scored.setdefault(
                 code,
                 {"score": 0.0, "matched": [], "cat": cat},

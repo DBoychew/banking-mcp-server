@@ -182,6 +182,15 @@ def test_longer_keyword_outranks_shorter_overlap():
     assert "ипотечен кредит" in result.matches[0].matched_keywords
 
 
+def test_prefix_keyword_outranks_deeper_longer_match():
+    """A transaction-type token at the start of the description (e.g. 'АТМ ...')
+    must outrank a longer merchant keyword that happens to appear later in the
+    same string. Guards against the 'АТМ ... Университет' false positive."""
+    result = classify("АТМ МС Соф Университет 30.12.2022", top_k=1)
+    assert result.matches[0].code == "002003003000"  # Теглене на терминално устройство
+    assert "атм" in result.matches[0].matched_keywords
+
+
 # ---------------------------------------------------------------------------
 # Tool surface
 # ---------------------------------------------------------------------------

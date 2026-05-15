@@ -1,6 +1,6 @@
 """Dashboard builder MCP tools.
 
-Mirrors ``petru/src/mcp_tools/dashboard_tools.py``: the LLM adds widgets
+The LLM adds widgets
 whose Python code uses the same ``tools`` object as ``execute_code``.
 Streamlit re-renders them on the next file watcher tick.
 
@@ -140,5 +140,5 @@ def register_dashboard_tools(mcp) -> None:
         return json.dumps(info, ensure_ascii=False, indent=2)
 
     # NOTE: dashboard_set_global_filter is intentionally not exposed yet
-    # (same as petru). The DashboardManager already supports it - flip on
+    # The DashboardManager already supports it - flip on
     # when we agree on the LLM-facing description.
