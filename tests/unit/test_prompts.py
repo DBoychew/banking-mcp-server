@@ -48,6 +48,7 @@ def test_all_prompts_registered(registered):
         "sql_helper",
         "categorize_transaction",
         "spending_breakdown_by_category",
+        "explain_payment_term",
         "income_pattern_analysis",
     }
 
@@ -217,3 +218,15 @@ def test_phase5_prompts_render_when_no_connection(registered):
         customer_id="1", from_date="2026-01-01", to_date="2026-01-31"
     )
     assert "no connection configured" in out
+
+
+def test_explain_payment_term_references_glossary(registered):
+    fake_mcp, _ = registered
+    out = fake_mcp.prompts["explain_payment_term"]("interchange")
+    assert "'interchange'" in out
+    # Must point the LLM at the canonical glossary resource so it does
+    # not paraphrase from training-data memory.
+    assert "banking://payment-glossary" in out
+    # Should explicitly tell the model what to do when the term is absent
+    # from the glossary - prevents silently inventing a definition.
+    assert "outside the canonical glossary" in out

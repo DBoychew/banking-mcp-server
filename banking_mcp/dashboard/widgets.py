@@ -202,10 +202,26 @@ class DashboardState:
         return cls.from_dict(json.loads(json_str))
 
 
+_BG_TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l",
+    "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s",
+    "т": "t", "у": "u", "ф": "f", "х": "h", "ц": "ts", "ч": "ch",
+    "ш": "sh", "щ": "sht", "ъ": "a", "ь": "y", "ю": "yu", "я": "ya",
+}
+
+
 def generate_widget_id(title: str) -> str:
-    """Generate a snake_case id from a free-form title."""
-    id_str = title.lower()
-    id_str = re.sub(r"[^a-z0-9]+", "_", id_str)
+    """Generate a snake_case id from a free-form title.
+
+    Transliterates Bulgarian Cyrillic before slugification so titles like
+    "Най-голяма транзакция" produce readable ASCII ids
+    ("nay_golyama_tranzaktsiya") instead of collapsing to the literal
+    "widget" fallback.
+    """
+    lowered = title.lower()
+    transliterated = "".join(_BG_TRANSLIT.get(ch, ch) for ch in lowered)
+    id_str = re.sub(r"[^a-z0-9]+", "_", transliterated)
     id_str = re.sub(r"_+", "_", id_str)
     id_str = id_str.strip("_")
     return id_str or "widget"

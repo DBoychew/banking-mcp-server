@@ -262,6 +262,32 @@ def register_banking_prompts(mcp) -> None:
 
     @mcp.prompt(
         description=(
+            "Explain a payment-domain term from the card-payments glossary "
+            "(BIN, interchange, chargeback, 3DS2, PCI-DSS, etc.). Reads "
+            "`banking://payment-glossary` for canonical BG definitions."
+        )
+    )
+    def explain_payment_term(term: str) -> str:
+        return (
+            "You are a card-payments domain explainer.\n\n"
+            f"Term: {term!r}\n\n"
+            "Tasks:\n"
+            "1. Read the `banking://payment-glossary` MCP resource "
+            "(canonical BG definitions from UC-CARD-AI-001 §10).\n"
+            "2. If the term matches an entry (exact match or close "
+            "synonym), return its definition verbatim and the expanded "
+            "form if one is present. Cite the resource.\n"
+            "3. If the term does not appear in the glossary, say so "
+            "explicitly and offer a short fallback explanation marked "
+            "as outside the canonical glossary - do NOT pretend it is "
+            "from the spec.\n"
+            "4. Optionally add 1-2 sentences of context for how the term "
+            "applies in the local card-payments setting (Visa, Mastercard, "
+            "BCARD, BORICA)."
+        )
+
+    @mcp.prompt(
+        description=(
             "Detect regular income for a customer: payroll-pattern matches "
             "and recurring same-payer credits classified to code "
             "001001001000 (Възнаграждение)."

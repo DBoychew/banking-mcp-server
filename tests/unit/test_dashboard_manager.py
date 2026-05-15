@@ -96,6 +96,27 @@ def test_add_widget_assigns_unique_ids_on_collision(
     assert w3.id == "same_2"
 
 
+def test_add_widget_transliterates_cyrillic_titles(
+    manager: DashboardManager,
+) -> None:
+    # Bulgarian titles used to collapse to the literal "widget" fallback
+    # (only ASCII a-z0-9 survived the slug regex), so two cyrillic titles
+    # in the same dashboard collided. Transliteration produces stable ids.
+    _, _, w1 = manager.add_widget(
+        title="Най-голяма транзакция",
+        widget_type="metric",
+        python_code="st.write(1)",
+    )
+    _, _, w2 = manager.add_widget(
+        title="Сума на топ 10",
+        widget_type="metric",
+        python_code="st.write(2)",
+    )
+    assert w1.id == "nay_golyama_tranzaktsiya"
+    assert w2.id == "suma_na_top_10"
+    assert w1.id != w2.id
+
+
 def test_update_widget_changes_fields(manager: DashboardManager) -> None:
     _, _, widget = manager.add_widget(
         title="x", widget_type="metric", python_code="st.write(1)"
