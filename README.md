@@ -3,7 +3,16 @@
 This server can run in two modes:
 
 - `stdio` for local desktop clients
-- `http` for web clients 
+- `http` for web clients
+
+## Specifications
+
+- `docs/specs/AI_CardPayments_Agent_UseCase.docx` — UC-CARD-AI-001 v1.0 (authoritative)
+- `docs/specs/AI_CardPayments_Agent_UseCase.md` — markdown rendering for git diff/grep (regenerate via `python scripts/convert_usecase_docx.py`)
+
+Cite UC-IDs (UC-01..UC-05) in PRs that touch areas covered by the spec.
+The glossary (Section 10) is exposed at runtime as the
+`banking://payment-glossary` MCP resource.
 
 ## Local HTTP run
 

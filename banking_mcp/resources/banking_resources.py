@@ -9,6 +9,7 @@ URIs:
   - banking://transaction-categories/incoming    -> incoming categories only
   - banking://transaction-categories/outgoing    -> outgoing categories only
   - banking://transaction-categories/payroll-patterns -> BG payroll patterns
+  - banking://payment-glossary                   -> BG payment-terminology glossary (UC-CARD-AI-001 §10)
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from __future__ import annotations
 import json
 
 from banking_mcp.db import SQL_DIALECT_HINTS, get_manager
-from banking_mcp.resources import categories_loader
+from banking_mcp.resources import categories_loader, glossary_loader
 
 
 def register_banking_resources(mcp) -> None:
@@ -173,6 +174,21 @@ def register_banking_resources(mcp) -> None:
         ]
         return json.dumps(
             {"count": len(codes), "codes": codes}, ensure_ascii=False, indent=2
+        )
+
+    @mcp.resource(
+        "banking://payment-glossary",
+        mime_type="application/json",
+        description=(
+            "BG payment-terminology glossary (UC-CARD-AI-001 §10). Use this "
+            "to answer terminology questions (BIN, interchange, chargeback, "
+            "3DS2, PCI-DSS, etc.) with the canonical definitions from the "
+            "card-payments spec."
+        ),
+    )
+    def payment_glossary_resource() -> str:
+        return json.dumps(
+            glossary_loader.load_glossary(), ensure_ascii=False, indent=2
         )
 
     @mcp.resource(

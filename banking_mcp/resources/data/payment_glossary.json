@@ -1,0 +1,80 @@
+{
+  "version": "1.0",
+  "source_file": "AI_CardPayments_Agent_UseCase.docx",
+  "source_section": "10. Речник на Платежни Термини",
+  "spec_id": "UC-CARD-AI-001",
+  "locale": "bg_BG",
+  "count": 14,
+  "terms": [
+    {
+      "term": "BIN",
+      "expanded": "Bank Identification Number",
+      "definition": "Първите 6-8 цифри на картата, идентифициращи издателя и продукта."
+    },
+    {
+      "term": "Interchange",
+      "expanded": null,
+      "definition": "Такса, платима между банките при обработка на картова транзакция."
+    },
+    {
+      "term": "Approval Rate",
+      "expanded": null,
+      "definition": "Процент успешно авторизирани транзакции от всички опити."
+    },
+    {
+      "term": "Fraud Rate (bp)",
+      "expanded": null,
+      "definition": "Стойност на измамни транзакции / обща стойност в базисни точки (1 bp = 0.01%)."
+    },
+    {
+      "term": "Chargeback",
+      "expanded": null,
+      "definition": "Оспорена транзакция, върната от картодържателя чрез банката му."
+    },
+    {
+      "term": "Clearing",
+      "expanded": null,
+      "definition": "Процес на обмен и съгласуване на транзакционни файлове между банки и scheme."
+    },
+    {
+      "term": "Settlement",
+      "expanded": null,
+      "definition": "Финансово уреждане (превод на средства) след клиринг."
+    },
+    {
+      "term": "3DS2",
+      "expanded": "3D Secure 2 / EMV 3-D Secure",
+      "definition": "Протокол за автентикация при онлайн транзакции."
+    },
+    {
+      "term": "CNP",
+      "expanded": "Card Not Present",
+      "definition": "Транзакция без физическо присъствие на картата (e-commerce, MOTO)."
+    },
+    {
+      "term": "ATO",
+      "expanded": "Account Takeover",
+      "definition": "Измама чрез завземане на клиентски акаунт/карта от трета страна."
+    },
+    {
+      "term": "RAG Status",
+      "expanded": "Red / Amber / Green",
+      "definition": "Цветови индикатор за отклонение от целеви стойности."
+    },
+    {
+      "term": "Net Position",
+      "expanded": null,
+      "definition": "Нетната сума за получаване/изплащане след клиринг между две страни."
+    },
+    {
+      "term": "Scheme",
+      "expanded": null,
+      "definition": "Картова мрежа/организация: Visa, Mastercard, BCARD и др."
+    },
+    {
+      "term": "PCI-DSS",
+      "expanded": "Payment Card Industry Data Security Standard",
+      "definition": "Стандарт за защита на карти."
+    }
+  ]
+}

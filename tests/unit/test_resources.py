@@ -52,6 +52,7 @@ def test_all_resources_registered(registered):
         "banking://transaction-categories/outgoing",
         "banking://transaction-categories/payroll-patterns",
         "banking://transaction-categories/codes",
+        "banking://payment-glossary",
         "banking://classification-stats",
     }
 
@@ -146,3 +147,13 @@ def test_transaction_categories_payroll_patterns_resource(registered):
     assert all(
         "pattern_group" in p and "example" in p for p in out["patterns"]
     )
+
+
+def test_payment_glossary_resource(registered):
+    fake_mcp, _ = registered
+    out = json.loads(fake_mcp.resources["banking://payment-glossary"]())
+    assert out["spec_id"] == "UC-CARD-AI-001"
+    assert out["locale"] == "bg_BG"
+    assert out["count"] == len(out["terms"])
+    terms = {entry["term"] for entry in out["terms"]}
+    assert {"BIN", "Interchange", "Chargeback", "3DS2", "PCI-DSS"}.issubset(terms)
