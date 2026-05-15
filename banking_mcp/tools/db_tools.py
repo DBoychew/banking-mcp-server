@@ -83,14 +83,16 @@ def register_db_tools(mcp) -> None:
         description=(
             "Execute Python code to analyze data. "
             "The code has access to a `tools` object for SQL queries against the configured database. "
-            "Save final output to variable `result`.\n\n"
-            "Examples:\n"
-            "  df = tools.execute_sql_query('SELECT * FROM cards WHERE rownum <= 10')\n"
-            "  df = tools.execute_sql_query('SELECT * FROM accounts', connection='scards')\n"
-            "  df = tools.execute_domain_query('some_query', param1='value')\n"
-            "  enriched = tools.classify_transactions(df, description_column='description')\n"
-            "  result = df.to_dict('records')\n\n"
-            "Available: pd (pandas), np (numpy), json, math."
+            "Save final output to variable `result`. "
+            "IMPORTANT: submit code as a single line using `;` to separate statements. "
+            "Literal newlines (\\n) are not supported by the sandbox parser - they cause SyntaxError. "
+            "Use UPPERCASE column names from Oracle (e.g. 'DESCRIPTION', not 'description'). "
+            "Available preloaded: pd (pandas), np (numpy), json, math, tools. "
+            "Examples (each is one complete single-line program): "
+            "EX1 -> df = tools.execute_sql_query('SELECT * FROM accounts WHERE ROWNUM <= 10'); result = df.to_dict('records') | "
+            "EX2 -> df = tools.execute_sql_query('SELECT * FROM accounts', connection='scards'); result = df.to_dict('records') | "
+            "EX3 -> df = tools.execute_sql_query('SELECT description FROM card_transactions WHERE ROWNUM <= 50'); enriched = tools.classify_transactions(df, description_column='DESCRIPTION'); result = enriched.to_dict('records') | "
+            "EX4 -> df = tools.execute_sql_query('SELECT 1 FROM no_such_table'); result = {'rows': len(df), 'last_error': tools.last_error}"
         )
     )
     def execute_code(code: str) -> str:
