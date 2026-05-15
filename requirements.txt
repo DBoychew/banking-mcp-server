@@ -25,6 +25,11 @@ RestrictedPython>=7.0
 # Oracle (primary DB)
 oracledb>=2.0.0
 
+# Dashboards
+streamlit>=1.30.0
+plotly>=5.18.0
+filelock>=3.13.0
+
 # Dev
 pytest>=8.0.0
 pytest-asyncio>=0.24.0

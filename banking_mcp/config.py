@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     ORACLE_DSN: str = ""
     ORACLE_SCHEMA: str = ""
 
+    # -------- Dashboards (Streamlit) --------
+    # External URL the LLM hands to the user.
+    DASHBOARD_URL: str = "http://localhost:8501"
+    DASHBOARD_PORT: int = Field(default=8501, ge=1, le=65535)
+    # Only honored when MCP_TRANSPORT in {"http", "sse"}.
+    DASHBOARD_AUTOSTART: bool = True
+    DASHBOARD_DEFAULT_ID: str = "default"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @field_validator("MCP_TRANSPORT", mode="before")
