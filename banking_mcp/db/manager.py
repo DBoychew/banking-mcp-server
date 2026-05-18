@@ -650,6 +650,62 @@ class DatabaseManager:
     def refresh_schema(self, connection: str | None = None) -> str:
         return self.get_schema(connection, force_refresh=True)
 
+    def get_table_list(self, connection: str | None = None) -> list[str]:
+        """Return sorted table names for a connection (uses schema cache)."""
+        conn_name = connection or get_default_connection()
+        if not conn_name:
+            raise ValueError("No connection specified and no default connection configured")
+        schema = self.get_schema(conn_name)
+        tables = []
+        for line in schema.strip().splitlines():
+            if ": " in line:
+                tables.append(line.split(": ", 1)[0])
+        return sorted(tables)
+
+    def get_table_columns(
+        self, connection: str | None = None, table_name: str = ""
+    ) -> list[dict] | None:
+        """Return column dicts for a table, or None if the table is not found."""
+        conn_name = connection or get_default_connection()
+        if not conn_name:
+            raise ValueError("No connection specified and no default connection configured")
+        schema = self.get_schema(conn_name)
+        needle = table_name.upper()
+        for line in schema.strip().splitlines():
+            if ": " not in line:
+                continue
+            name, cols_str = line.split(": ", 1)
+            if name.upper() == needle:
+                return DatabaseManager._parse_column_list(cols_str)
+        return None
+
+    @staticmethod
+    def _parse_column_list(cols_str: str) -> list[dict]:
+        """Parse 'COL1(type1), COL2(type2(sub))' handling nested parens in types."""
+        columns: list[dict] = []
+        pos = 0
+        col_pat = re.compile(r"([A-Z_#$][A-Z0-9_#$]*)\(", re.IGNORECASE)
+        while pos < len(cols_str):
+            m = col_pat.match(cols_str, pos)
+            if not m:
+                break
+            col_name = m.group(1)
+            type_start = m.end()
+            depth = 1
+            i = type_start
+            while i < len(cols_str) and depth > 0:
+                if cols_str[i] == "(":
+                    depth += 1
+                elif cols_str[i] == ")":
+                    depth -= 1
+                i += 1
+            col_type = cols_str[type_start : i - 1]
+            columns.append({"name": col_name, "type": col_type})
+            pos = i
+            if pos < len(cols_str) and cols_str[pos] == ",":
+                pos += 2
+        return columns
+
     # -------------------------------------------------------------------------
     # Connection management
     # -------------------------------------------------------------------------
