@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 
 from banking_mcp.db import SQL_DIALECT_HINTS, get_manager
-from banking_mcp.resources import categories_loader, glossary_loader
+from banking_mcp.resources import categories_loader, glossary_loader, table_descriptions_loader
 
 
 def register_banking_resources(mcp) -> None:
@@ -189,6 +189,30 @@ def register_banking_resources(mcp) -> None:
     def payment_glossary_resource() -> str:
         return json.dumps(
             glossary_loader.load_glossary(), ensure_ascii=False, indent=2
+        )
+
+    @mcp.resource(
+        "banking://table-descriptions/{connection}",
+        mime_type="application/json",
+        description=(
+            "Human-authored descriptions for tables and columns in a connection. "
+            "Read this BEFORE writing SQL when table or column names are ambiguous "
+            "(e.g. multiple AMOUNT columns, overlapping tables). "
+            "Keys are table names; each value has 'description' and 'columns' "
+            "(column_name -> plain-language explanation of semantics and when to use it). "
+            "Edit data/table_descriptions/{connection}.json to maintain these descriptions."
+        ),
+    )
+    def table_descriptions_resource(connection: str) -> str:
+        data = table_descriptions_loader.load_descriptions(connection)
+        return json.dumps(
+            {
+                "connection": connection,
+                "table_count": len(data),
+                "tables": data,
+            },
+            indent=2,
+            ensure_ascii=False,
         )
 
     @mcp.resource(
