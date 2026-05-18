@@ -62,3 +62,4 @@ NOTES.local.*
 #Claude_code
 .claude
 .claude/
+/.sirma_conf
