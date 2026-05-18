@@ -53,6 +53,12 @@ Thumbs.db
 # Docker
 *.override.yml
 
+# Local scratch notes (personal, not for commit)
+Евентуални проблеми с banking-mcp.txt
+MANUAL_AGENT_TESTS_BG.md
+NOTES.local.*
+*.scratch.txt
+
 #Claude_code
 .claude
 .claude/
