@@ -679,6 +679,53 @@ class DatabaseManager:
                 return DatabaseManager._parse_column_list(cols_str)
         return None
 
+    def get_table_comments(
+        self, connection: str | None = None, table_name: str = ""
+    ) -> dict:
+        """Return {'table': str|None, 'columns': {COL: comment}} for Oracle.
+
+        Returns {} for non-Oracle DBs. Comments come from ALL_TAB_COMMENTS /
+        ALL_COL_COMMENTS (or the USER_* equivalents when no schema is set).
+        """
+        conn_name = connection or get_default_connection()
+        if not conn_name:
+            raise ValueError("No connection specified and no default connection configured")
+        conn_info = get_connection(conn_name)
+        if not conn_info:
+            raise ValueError(f"Connection '{conn_name}' not found")
+        if conn_info.get("db_type", "").lower() != "oracle":
+            return {}
+
+        schema_name = _get_oracle_schema(conn_info)
+        db_conn = _open_connection(conn_info)
+        try:
+            if schema_name:
+                tab_sql = (
+                    "SELECT comments FROM all_tab_comments "
+                    "WHERE owner = :owner AND table_name = :t"
+                )
+                col_sql = (
+                    "SELECT column_name, comments FROM all_col_comments "
+                    "WHERE owner = :owner AND table_name = :t"
+                )
+                params = {"owner": schema_name, "t": table_name.upper()}
+            else:
+                tab_sql = "SELECT comments FROM user_tab_comments WHERE table_name = :t"
+                col_sql = (
+                    "SELECT column_name, comments FROM user_col_comments "
+                    "WHERE table_name = :t"
+                )
+                params = {"t": table_name.upper()}
+
+            _, tab_rows = _run_select(conn_info, db_conn, tab_sql, params)
+            _, col_rows = _run_select(conn_info, db_conn, col_sql, params)
+            return {
+                "table": (tab_rows[0][0] if tab_rows and tab_rows[0][0] else None),
+                "columns": {name: comment for name, comment in col_rows if comment},
+            }
+        finally:
+            _close_quietly(db_conn)
+
     @staticmethod
     def _parse_column_list(cols_str: str) -> list[dict]:
         """Parse 'COL1(type1), COL2(type2(sub))' handling nested parens in types."""

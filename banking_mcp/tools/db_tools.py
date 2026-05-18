@@ -117,7 +117,10 @@ def register_db_tools(mcp) -> None:
             "Get column names and data types for a single table. "
             "Use after get_database_table_list to inspect a specific table. "
             "Check banking://table-descriptions/{connection} alongside this to "
-            "understand column semantics (e.g. AMOUNT_LOCAL_CCY vs CARD_AMOUNT)."
+            "understand column semantics (e.g. AMOUNT_LOCAL_CCY vs CARD_AMOUNT). "
+            "On Oracle, the response also includes a top-level 'table_description' "
+            "and a per-column 'description' field sourced from ALL_TAB_COMMENTS / "
+            "ALL_COL_COMMENTS when those comments are populated in the database."
         )
     )
     def get_table_info(table_name: str, connection: str = "") -> str:
@@ -138,10 +141,17 @@ def register_db_tools(mcp) -> None:
                     },
                     indent=2,
                 )
+            comments = db.get_table_comments(conn, table_name)
+            col_comments = comments.get("columns", {})
+            for col in columns:
+                desc = col_comments.get(col["name"])
+                if desc:
+                    col["description"] = desc
             return json.dumps(
                 {
                     "connection": conn,
                     "table": table_name,
+                    "table_description": comments.get("table"),
                     "column_count": len(columns),
                     "columns": columns,
                 },
