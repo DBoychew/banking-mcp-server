@@ -54,6 +54,7 @@ def test_all_resources_registered(registered):
         "banking://transaction-categories/codes",
         "banking://payment-glossary",
         "banking://classification-stats",
+        "banking://table-descriptions/{connection}",
     }
 
 
