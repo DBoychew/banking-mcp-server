@@ -42,10 +42,14 @@ def registered_tools(monkeypatch):
     return fake_mcp, fake_db
 
 
-def test_three_tools_registered(registered_tools):
+def test_db_tools_registered(registered_tools):
     fake_mcp, _ = registered_tools
     assert set(fake_mcp.tools.keys()) == {
-        "list_databases", "get_database_context", "execute_code"
+        "list_databases",
+        "get_database_context",
+        "get_database_table_list",
+        "get_table_info",
+        "execute_code",
     }
 
 
