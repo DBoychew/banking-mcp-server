@@ -2,9 +2,11 @@
 Database analytics MCP tools.
 
 Exposes:
-  list_databases()       -> available data sources
-  get_database_context() -> schema + domain queries for LLM context
-  execute_code()         -> Python sandbox with BankingToolsAPI
+  list_databases()            -> available data sources
+  get_database_context()      -> schema + domain queries for LLM context
+  get_database_table_list()   -> table names only (lightweight alternative)
+  get_table_info()            -> columns + types for one table
+  execute_code()              -> Python sandbox with BankingToolsAPI
 """
 
 import json
@@ -51,8 +53,14 @@ def register_db_tools(mcp) -> None:
 
     @mcp.tool(
         description=(
-            "Get database schema and available domain queries for LLM context. "
-            "Use this at the start of a conversation to understand available data."
+            "Heavy convenience wrapper: returns full schema + domain queries + dialect hint "
+            "in one call. WARNING: response can exceed 100k tokens on large schemas — "
+            "prefer the lightweight alternatives when possible: "
+            "use get_database_table_list to see table names, get_table_info for a specific "
+            "table's columns, banking://dialects for SQL dialect hints, and "
+            "banking://domain-queries/{connection} for pre-configured queries. "
+            "Use this tool only when you need domain queries AND schema together in one shot "
+            "and the model context window is large enough to handle it."
         )
     )
     def get_database_context(connection: str = "") -> str:
@@ -76,6 +84,69 @@ def register_db_tools(mcp) -> None:
         try:
             context = db.get_context_for_llm(conn)
             return json.dumps(context, indent=2, default=str)
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    @mcp.tool(
+        description=(
+            "List all table names in a database connection. "
+            "Much lighter than get_database_context - use this first to discover "
+            "which tables exist, then call get_table_info for specific tables. "
+            "Also check banking://table-descriptions/{connection} for human-written "
+            "table and column descriptions before deciding which table to query."
+        )
+    )
+    def get_database_table_list(connection: str = "") -> str:
+        db = get_manager()
+        conn = connection or db.get_default_connection()
+        if not conn:
+            return json.dumps(
+                {"error": "No connection specified and no default connection configured"}
+            )
+        try:
+            tables = db.get_table_list(conn)
+            return json.dumps(
+                {"connection": conn, "table_count": len(tables), "tables": tables},
+                indent=2,
+            )
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    @mcp.tool(
+        description=(
+            "Get column names and data types for a single table. "
+            "Use after get_database_table_list to inspect a specific table. "
+            "Check banking://table-descriptions/{connection} alongside this to "
+            "understand column semantics (e.g. AMOUNT_LOCAL_CCY vs CARD_AMOUNT)."
+        )
+    )
+    def get_table_info(table_name: str, connection: str = "") -> str:
+        db = get_manager()
+        conn = connection or db.get_default_connection()
+        if not conn:
+            return json.dumps(
+                {"error": "No connection specified and no default connection configured"}
+            )
+        try:
+            columns = db.get_table_columns(conn, table_name)
+            if columns is None:
+                tables = db.get_table_list(conn)
+                return json.dumps(
+                    {
+                        "error": f"Table '{table_name}' not found in connection '{conn}'",
+                        "available_tables": tables,
+                    },
+                    indent=2,
+                )
+            return json.dumps(
+                {
+                    "connection": conn,
+                    "table": table_name,
+                    "column_count": len(columns),
+                    "columns": columns,
+                },
+                indent=2,
+            )
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 
