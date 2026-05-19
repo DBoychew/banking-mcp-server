@@ -1,0 +1,95 @@
+{
+  "connections": {
+    "scards": {
+      "name": "scards",
+      "dsn": "${ORACLE_DSN}",
+      "description": "SCARDS_O - masked Oracle DEV schema (FLEXLIVE)",
+      "db_type": "oracle",
+      "schema": "${ORACLE_SCHEMA}",
+      "schema_filter": {
+        "include": [],
+        "exclude": []
+      }
+    }
+  },
+  "default_connection": "scards",
+  "domain_queries": {
+    "scards": {
+      "transaction_count_by_period": {
+        "description": "UC-01. Count of financial card transactions in a date range. Uses CARD_TRANSACTIONS.TRANSACTION_DATE with a half-open interval [from_date, to_date).",
+        "sql": "SELECT COUNT(*) AS CNT FROM CARD_TRANSACTIONS WHERE TRANSACTION_DATE >= TO_DATE(:from_date,'YYYY-MM-DD') AND TRANSACTION_DATE <  TO_DATE(:to_date,'YYYY-MM-DD')",
+        "params": [
+          {"name": "from_date", "type": "string", "description": "Inclusive start, YYYY-MM-DD."},
+          {"name": "to_date",   "type": "string", "description": "Exclusive end, YYYY-MM-DD."}
+        ],
+        "returns": "DataFrame with a single CNT column."
+      },
+      "top_n_transactions_in_period": {
+        "description": "UC-01. Top N largest financial card transactions in a date range, by AMOUNT_LOCAL_CCY (BGN). Use this for 'biggest / largest / top transactions' questions; CARD_AMOUNT is unreliable in DEV.",
+        "sql": "SELECT TRANSACTION_ID, TRANSACTION_DATE, AMOUNT_LOCAL_CCY, DESCRIPTION FROM (SELECT TRANSACTION_ID, TRANSACTION_DATE, AMOUNT_LOCAL_CCY, DESCRIPTION FROM CARD_TRANSACTIONS WHERE TRANSACTION_DATE >= TO_DATE(:from_date,'YYYY-MM-DD') AND TRANSACTION_DATE <  TO_DATE(:to_date,'YYYY-MM-DD') ORDER BY AMOUNT_LOCAL_CCY DESC) WHERE ROWNUM <= :n",
+        "params": [
+          {"name": "from_date", "type": "string", "description": "Inclusive start, YYYY-MM-DD."},
+          {"name": "to_date",   "type": "string", "description": "Exclusive end, YYYY-MM-DD."},
+          {"name": "n",         "type": "int",    "default": 10, "description": "Number of rows to return."}
+        ],
+        "returns": "DataFrame: TRANSACTION_ID, TRANSACTION_DATE, AMOUNT_LOCAL_CCY, DESCRIPTION."
+      },
+      "approval_rate_by_channel_daily": {
+        "description": "UC-02. Daily authorization approval rate per channel (ATM, Contactless, POS) from STG_TRANSACTIONS_BORICA_EO. Approved = TRANSACTION_CODE='A'; Declined = TRANSACTION_CODE='N'. Settlement ('D') and journal ('B') rows are excluded — including them double-counts approvals and inflates the rate. Channel classification: POS_ENTRY_MODE LIKE '07%' = Contactless; else MERCHANT_TYPE='6011' = ATM; else POS.",
+        "sql": "WITH classified AS (SELECT TRUNC(TIME_STAMP) AS TRN_DATE, CASE WHEN POS_ENTRY_MODE LIKE '07%' THEN 'Contactless' WHEN MERCHANT_TYPE = '6011' THEN 'ATM' ELSE 'POS' END AS CHANNEL, TRANSACTION_CODE FROM STG_TRANSACTIONS_BORICA_EO WHERE TRANSACTION_CODE IN ('A','N') AND TIME_STAMP IS NOT NULL AND TIME_STAMP >= TO_DATE(:from_date,'YYYY-MM-DD') AND TIME_STAMP <  TO_DATE(:to_date,'YYYY-MM-DD')), agg AS (SELECT TRN_DATE, CHANNEL, SUM(CASE WHEN TRANSACTION_CODE='A' THEN 1 ELSE 0 END) AS APPR, SUM(CASE WHEN TRANSACTION_CODE='N' THEN 1 ELSE 0 END) AS DECL FROM classified GROUP BY TRN_DATE, CHANNEL), rates AS (SELECT TRN_DATE, CHANNEL, ROUND(APPR/NULLIF(APPR+DECL,0)*100,2) AS RATE FROM agg) SELECT TO_CHAR(TRN_DATE,'YYYY-MM-DD') AS TRN_DATE, MAX(CASE WHEN CHANNEL='ATM' THEN RATE END) AS ATM_PCT, MAX(CASE WHEN CHANNEL='Contactless' THEN RATE END) AS CONTACTLESS_PCT, MAX(CASE WHEN CHANNEL='POS' THEN RATE END) AS POS_PCT FROM rates GROUP BY TRN_DATE ORDER BY TRN_DATE DESC FETCH FIRST :n ROWS ONLY",
+        "params": [
+          {"name": "from_date", "type": "string", "description": "Inclusive start of the window, YYYY-MM-DD."},
+          {"name": "to_date",   "type": "string", "description": "Exclusive end of the window, YYYY-MM-DD."},
+          {"name": "n",         "type": "int",    "default": 10, "description": "Number of most recent days to return."}
+        ],
+        "returns": "DataFrame: TRN_DATE, ATM_PCT, CONTACTLESS_PCT, POS_PCT (NULL if a channel had no traffic that day)."
+      },
+      "top_decline_reasons": {
+        "description": "UC-02. Top N decline reasons over a period — distribution of AUTH_RESPONCE_CODE on declined authorizations (TRANSACTION_CODE='N') in STG_TRANSACTIONS_BORICA_EO. Codes are ISO 8583 response codes (e.g. 51=Insufficient funds, 57=Not permitted, 14=Invalid card, 05=Do not honor, 65=Exceeds withdrawal limit, 55=Incorrect PIN); map them at presentation time. Blank/garbage codes are bucketed as 'UNKNOWN'. Note: 'D'/'B' rows are NOT declines and are excluded.",
+        "sql": "WITH base AS (SELECT NVL(TRIM(AUTH_RESPONCE_CODE),'UNKNOWN') AS RESP_CODE FROM STG_TRANSACTIONS_BORICA_EO WHERE TRANSACTION_CODE = 'N' AND TIME_STAMP IS NOT NULL AND TIME_STAMP >= TO_DATE(:from_date,'YYYY-MM-DD') AND TIME_STAMP <  TO_DATE(:to_date,'YYYY-MM-DD')), tot AS (SELECT COUNT(*) AS TOT FROM base) SELECT RESP_CODE, COUNT(*) AS DECLINES, ROUND(COUNT(*) / NULLIF((SELECT TOT FROM tot),0) * 100, 2) AS PCT FROM base GROUP BY RESP_CODE ORDER BY DECLINES DESC FETCH FIRST :n ROWS ONLY",
+        "params": [
+          {"name": "from_date", "type": "string", "description": "Inclusive start of the window, YYYY-MM-DD."},
+          {"name": "to_date",   "type": "string", "description": "Exclusive end of the window, YYYY-MM-DD."},
+          {"name": "n",         "type": "int",    "default": 10, "description": "Number of top decline codes to return."}
+        ],
+        "returns": "DataFrame: RESP_CODE, DECLINES, PCT (share of all declines in the window)."
+      },
+      "active_cards_by_product": {
+        "description": "UC-05. Count of active cards grouped by CARD_PRODUCTS.NAME. 'Active' = CARDS.STATUS='2' (the issued/usable state — '1'=in production, '2'=active, '3'=closed/canceled, '0'=transient/test). Returned ordered by ACTIVE_CARDS desc; top N.",
+        "sql": "SELECT cp.NAME AS PRODUCT_NAME, COUNT(*) AS ACTIVE_CARDS FROM CARDS c LEFT JOIN CARD_PRODUCTS cp ON cp.PRODUCT_ID = c.PRODUCT_ID WHERE c.STATUS = '2' GROUP BY cp.NAME ORDER BY ACTIVE_CARDS DESC FETCH FIRST :n ROWS ONLY",
+        "params": [
+          {"name": "n", "type": "int", "default": 10, "description": "Number of top products to return."}
+        ],
+        "returns": "DataFrame: PRODUCT_NAME, ACTIVE_CARDS."
+      },
+      "mc_interchange_summary_by_period": {
+        "description": "UC-03. Mastercard interchange (acquiring side) summary for a date range, grouped by currency and debit/credit direction. Source: MC_IRF_ACQUIRING_TT140 — TT140 file reconciliation records. NOTE: SETTLEMENT_DATE in this table is YYMMDD VARCHAR (6 chars). RECONT_AMOUNT is the reconciliation amount; FEE is the interchange fee component. CCY 978=EUR, 840=USD; in DEV, USD rows often have zero amounts. D_C_INDICATOR: 'CR' = credit (we receive), 'DR' = debit (we pay).",
+        "sql": "SELECT CCY, D_C_INDICATOR, COUNT(*) AS ROW_COUNT, SUM(COUNTS) AS TXN_COUNTS, ROUND(SUM(RECONT_AMOUNT),2) AS TOTAL_RECONT_AMOUNT, ROUND(SUM(FEE),2) AS TOTAL_FEE FROM MC_IRF_ACQUIRING_TT140 WHERE SETTLEMENT_DATE >= TO_CHAR(TO_DATE(:from_date,'YYYY-MM-DD'),'YYMMDD') AND SETTLEMENT_DATE <  TO_CHAR(TO_DATE(:to_date,'YYYY-MM-DD'),'YYMMDD') GROUP BY CCY, D_C_INDICATOR ORDER BY TOTAL_RECONT_AMOUNT DESC",
+        "params": [
+          {"name": "from_date", "type": "string", "description": "Inclusive start, YYYY-MM-DD."},
+          {"name": "to_date",   "type": "string", "description": "Exclusive end, YYYY-MM-DD."}
+        ],
+        "returns": "DataFrame: CCY (ISO numeric), D_C_INDICATOR (CR/DR), ROW_COUNT, TXN_COUNTS, TOTAL_RECONT_AMOUNT, TOTAL_FEE."
+      },
+      "borica_daily_settlement_net_position": {
+        "description": "UC-04. Daily BORICA settlement net position for the last N days within a date window. Source: BORICA_SETTLEMENT (one or more rows per day, summed). DT_SUM = debit side (we owe), CT_SUM = credit side (owed to us); NET_POSITION_BGN = CT - DT (positive = inflow). Reports also exception count (ERR_ROWS) — non-zero indicates rejected file records that need investigation.",
+        "sql": "SELECT TO_CHAR(SETTLEMENT_DATE,'YYYY-MM-DD') AS SETTLEMENT_DATE, SUM(DT_COUNT) AS DEBIT_COUNT, ROUND(SUM(DT_SUM),2) AS DEBIT_SUM_BGN, SUM(CT_COUNT) AS CREDIT_COUNT, ROUND(SUM(CT_SUM),2) AS CREDIT_SUM_BGN, ROUND(SUM(CT_SUM) - SUM(DT_SUM),2) AS NET_POSITION_BGN, SUM(CASE WHEN ERR_CODE IS NOT NULL THEN 1 ELSE 0 END) AS ERR_ROWS FROM BORICA_SETTLEMENT WHERE SETTLEMENT_DATE >= TO_DATE(:from_date,'YYYY-MM-DD') AND SETTLEMENT_DATE <  TO_DATE(:to_date,'YYYY-MM-DD') GROUP BY SETTLEMENT_DATE ORDER BY SETTLEMENT_DATE DESC FETCH FIRST :n ROWS ONLY",
+        "params": [
+          {"name": "from_date", "type": "string", "description": "Inclusive start of the window, YYYY-MM-DD."},
+          {"name": "to_date",   "type": "string", "description": "Exclusive end of the window, YYYY-MM-DD."},
+          {"name": "n",         "type": "int",    "default": 10, "description": "Number of most recent days to return."}
+        ],
+        "returns": "DataFrame: SETTLEMENT_DATE, DEBIT_COUNT, DEBIT_SUM_BGN, CREDIT_COUNT, CREDIT_SUM_BGN, NET_POSITION_BGN, ERR_ROWS."
+      },
+      "visa_settlement_summary_by_period": {
+        "description": "UC-04. Visa settlement summary for a date range, grouped by report type and credit/debit direction. Source: VISA_SETTLEMENT. NOTE: SETTLEMENT_DATE is YYYYMMDD VARCHAR (8 chars). REPORT_TYPE values include V4120/V4130/V4140 (different scheme report variants); AMT_SETTLEMENT_INDICATOR: 'CR' = credit, 'DB' = debit, blank = informational/zero-amount row. Aggregates CNT and AMT_SETTLEMENT.",
+        "sql": "SELECT TO_CHAR(TO_DATE(SETTLEMENT_DATE,'YYYYMMDD'),'YYYY-MM-DD') AS SETTLEMENT_DATE, REPORT_TYPE, AMT_SETTLEMENT_INDICATOR, SUM(CNT) AS TXN_CNT, ROUND(SUM(AMT_SETTLEMENT),2) AS TOTAL_SETTLEMENT_AMT FROM VISA_SETTLEMENT WHERE SETTLEMENT_DATE >= TO_CHAR(TO_DATE(:from_date,'YYYY-MM-DD'),'YYYYMMDD') AND SETTLEMENT_DATE <  TO_CHAR(TO_DATE(:to_date,'YYYY-MM-DD'),'YYYYMMDD') GROUP BY SETTLEMENT_DATE, REPORT_TYPE, AMT_SETTLEMENT_INDICATOR ORDER BY SETTLEMENT_DATE DESC, REPORT_TYPE, AMT_SETTLEMENT_INDICATOR",
+        "params": [
+          {"name": "from_date", "type": "string", "description": "Inclusive start, YYYY-MM-DD."},
+          {"name": "to_date",   "type": "string", "description": "Exclusive end, YYYY-MM-DD."}
+        ],
+        "returns": "DataFrame: SETTLEMENT_DATE, REPORT_TYPE, AMT_SETTLEMENT_INDICATOR, TXN_CNT, TOTAL_SETTLEMENT_AMT."
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "ACCOUNTS": {
+    "description": "Bank accounts (card accounts). One row per account. Primary key: ACCOUNT_ID.",
+    "columns": {
+      "ACCOUNT_ID": "Internal numeric account identifier. Primary key.",
+      "ACCOUNT_NO": "IBAN (masked in DEV: BG...SOMB...). Do not display raw in production.",
+      "CURRENCY": "ISO 4217 numeric currency code. 975=BGN, 978=EUR, 840=USD.",
+      "IS_ACTIVE": "Account status flag. 'Y' = active, 'N' = inactive/closed."
+    }
+  },
+  "CARD_TRANSACTIONS": {
+    "description": "Card payment transactions. Primary table for card transaction analysis. NOTE (DEV): CARD_AMOUNT is mostly 0 in the DEV snapshot — use AMOUNT_LOCAL_CCY for monetary analysis.",
+    "columns": {
+      "TRANSACTION_ID": "Internal transaction identifier. Primary key.",
+      "DESCRIPTION": "Free-text transaction description (often in Bulgarian Cyrillic). Used for classification. ATM transactions start with 'АТМ'. Includes timestamp suffix — group by prefix for location analysis.",
+      "CARD_AMOUNT": "Transaction amount in the original card currency. CAUTION: equals 0 for most rows in the DEV snapshot. Only use when user explicitly asks for card-currency amount.",
+      "CARD_CURRENCY": "Original card transaction currency (ISO numeric). 975=BGN, 978=EUR, 840=USD.",
+      "AMOUNT_LOCAL_CCY": "Transaction amount converted to local currency (BGN). Preferred column for monetary analysis — contains the real amount even when CARD_AMOUNT=0.",
+      "TRANSACTION_DATE": "Date and time when the transaction was executed (Oracle DATE). DEV data is from 2022 — queries for 'this week' or 'last month' will return no rows.",
+      "SETTLEMENT_DATE": "Date when the transaction was settled by the bank. May differ from TRANSACTION_DATE."
+    }
+  }
+}
