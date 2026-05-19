@@ -46,6 +46,10 @@ def _write_(obj):
     return obj
 
 
+def _apply_(callable_obj, *args, **kwargs):
+    return callable_obj(*args, **kwargs)
+
+
 def _blocked_import(*_args, **_kwargs):
     raise ImportError(
         "Imports are not allowed in execute_code. "
@@ -167,6 +171,7 @@ class CodeExecutor:
                 "_write_": _write_,
                 "_getiter_": iter,
                 "_getitem_": lambda obj, index: obj[index],
+                "_apply_": _apply_,
                 "json": SafeJSON,
                 "tools": self.tools_api,
                 "_print_": PrintCollector,

@@ -89,6 +89,63 @@
           {"name": "to_date",   "type": "string", "description": "Exclusive end, YYYY-MM-DD."}
         ],
         "returns": "DataFrame: SETTLEMENT_DATE, REPORT_TYPE, AMT_SETTLEMENT_INDICATOR, TXN_CNT, TOTAL_SETTLEMENT_AMT."
+      },
+      "transaction_value_sum_by_period": {
+        "description": "UC-01. Total transaction value (SUM of AMOUNT_LOCAL_CCY in BGN) and count for a date range. Use this for 'total spend / total value for period' questions.",
+        "sql": "SELECT ROUND(SUM(AMOUNT_LOCAL_CCY),2) AS TOTAL_VALUE_BGN, COUNT(*) AS TXN_COUNT FROM CARD_TRANSACTIONS WHERE TRANSACTION_DATE >= TO_DATE(:from_date,'YYYY-MM-DD') AND TRANSACTION_DATE <  TO_DATE(:to_date,'YYYY-MM-DD')",
+        "params": [
+          {"name": "from_date", "type": "string", "description": "Inclusive start, YYYY-MM-DD."},
+          {"name": "to_date",   "type": "string", "description": "Exclusive end, YYYY-MM-DD."}
+        ],
+        "returns": "Single-row DataFrame: TOTAL_VALUE_BGN, TXN_COUNT."
+      },
+      "top_merchants_by_volume": {
+        "description": "UC-01. Top N merchants by total value for a date range. Joins CARD_TRANSACTIONS to MERCHANTS via MERCHANT_IDN. Only transactions that have a merchant assigned (~52% of all rows — ATM and system transactions are excluded by the inner join).",
+        "sql": "SELECT m.NAME AS MERCHANT_NAME, COUNT(*) AS TXN_COUNT, ROUND(SUM(ct.AMOUNT_LOCAL_CCY),2) AS TOTAL_VALUE_BGN FROM CARD_TRANSACTIONS ct JOIN MERCHANTS m ON m.MERCHANT_IDN = ct.MERCHANT_IDN WHERE ct.TRANSACTION_DATE >= TO_DATE(:from_date,'YYYY-MM-DD') AND ct.TRANSACTION_DATE <  TO_DATE(:to_date,'YYYY-MM-DD') GROUP BY m.NAME ORDER BY TOTAL_VALUE_BGN DESC FETCH FIRST :n ROWS ONLY",
+        "params": [
+          {"name": "from_date", "type": "string", "description": "Inclusive start, YYYY-MM-DD."},
+          {"name": "to_date",   "type": "string", "description": "Exclusive end, YYYY-MM-DD."},
+          {"name": "n",         "type": "int",    "default": 10, "description": "Number of top merchants to return."}
+        ],
+        "returns": "DataFrame: MERCHANT_NAME, TXN_COUNT, TOTAL_VALUE_BGN."
+      },
+      "volume_by_scheme_period": {
+        "description": "UC-01. Transaction volume + value split by payment scheme (Mastercard, Visa, American Express, Other) for a date range. Scheme is derived from CARD_TRANSACTIONS.CARD_COMMUNITY: 'EUR'->Mastercard (Europe MC includes the local BCARD-on-MC product), 'VIS'->Visa, 'AME'->American Express.",
+        "sql": "SELECT CASE WHEN CARD_COMMUNITY = 'EUR' THEN 'Mastercard' WHEN CARD_COMMUNITY = 'VIS' THEN 'Visa' WHEN CARD_COMMUNITY = 'AME' THEN 'American Express' ELSE 'Other' END AS SCHEME, COUNT(*) AS TXN_COUNT, ROUND(SUM(AMOUNT_LOCAL_CCY),2) AS TOTAL_VALUE_BGN FROM CARD_TRANSACTIONS WHERE TRANSACTION_DATE >= TO_DATE(:from_date,'YYYY-MM-DD') AND TRANSACTION_DATE <  TO_DATE(:to_date,'YYYY-MM-DD') GROUP BY CASE WHEN CARD_COMMUNITY = 'EUR' THEN 'Mastercard' WHEN CARD_COMMUNITY = 'VIS' THEN 'Visa' WHEN CARD_COMMUNITY = 'AME' THEN 'American Express' ELSE 'Other' END ORDER BY TOTAL_VALUE_BGN DESC",
+        "params": [
+          {"name": "from_date", "type": "string", "description": "Inclusive start, YYYY-MM-DD."},
+          {"name": "to_date",   "type": "string", "description": "Exclusive end, YYYY-MM-DD."}
+        ],
+        "returns": "DataFrame: SCHEME, TXN_COUNT, TOTAL_VALUE_BGN."
+      },
+      "new_cards_in_period": {
+        "description": "UC-05. Count of cards opened during a date range, grouped by product. Uses CARDS.OPEN_DATE in [from_date, to_date). Includes all newly-opened cards regardless of current status (so a card opened then closed in the same window still counts as 'new').",
+        "sql": "SELECT cp.NAME AS PRODUCT_NAME, COUNT(*) AS NEW_CARDS FROM CARDS c LEFT JOIN CARD_PRODUCTS cp ON cp.PRODUCT_ID = c.PRODUCT_ID WHERE c.OPEN_DATE >= TO_DATE(:from_date,'YYYY-MM-DD') AND c.OPEN_DATE <  TO_DATE(:to_date,'YYYY-MM-DD') GROUP BY cp.NAME ORDER BY NEW_CARDS DESC FETCH FIRST :n ROWS ONLY",
+        "params": [
+          {"name": "from_date", "type": "string", "description": "Inclusive start, YYYY-MM-DD."},
+          {"name": "to_date",   "type": "string", "description": "Exclusive end, YYYY-MM-DD."},
+          {"name": "n",         "type": "int",    "default": 10, "description": "Number of top products to return."}
+        ],
+        "returns": "DataFrame: PRODUCT_NAME, NEW_CARDS."
+      },
+      "closed_cards_in_period": {
+        "description": "UC-05. Count of cards closed (STATUS='3') during a date range, grouped by close reason (REASON_CLOSE_ID -> CARD_REASON_CLOSE.REASON_TEXT). NULL reason rows are bucketed as '(none specified)' — note ~50% of closed cards have no recorded reason in DEV.",
+        "sql": "SELECT NVL(crc.REASON_TEXT,'(none specified)') AS CLOSE_REASON, COUNT(*) AS CLOSED_CARDS FROM CARDS c LEFT JOIN CARD_REASON_CLOSE crc ON crc.CLOSE_REASON_ID = c.REASON_CLOSE_ID WHERE c.STATUS = '3' AND c.STATUS_DATE >= TO_DATE(:from_date,'YYYY-MM-DD') AND c.STATUS_DATE <  TO_DATE(:to_date,'YYYY-MM-DD') GROUP BY crc.REASON_TEXT ORDER BY CLOSED_CARDS DESC FETCH FIRST :n ROWS ONLY",
+        "params": [
+          {"name": "from_date", "type": "string", "description": "Inclusive start, YYYY-MM-DD."},
+          {"name": "to_date",   "type": "string", "description": "Exclusive end, YYYY-MM-DD."},
+          {"name": "n",         "type": "int",    "default": 10, "description": "Number of top reasons to return."}
+        ],
+        "returns": "DataFrame: CLOSE_REASON, CLOSED_CARDS."
+      },
+      "file_processing_status_period": {
+        "description": "UC-04. File processing status counts for a date range, grouped by DIRECTION (I=Incoming, O=Outgoing) and STATUS (BG text: 'Обработен'=Processed, 'Грешка при обработка'=Processing error). Source: REPORT_FILES_PROCESSED_V. Use this to answer 'how many files were sent / accepted / rejected' style questions.",
+        "sql": "SELECT DIRECTION, STATUS, COUNT(*) AS FILES_COUNT, COUNT(DISTINCT TRUNC(PROCESS_DATE)) AS DAYS_OBSERVED FROM REPORT_FILES_PROCESSED_V WHERE PROCESS_DATE >= TO_DATE(:from_date,'YYYY-MM-DD') AND PROCESS_DATE <  TO_DATE(:to_date,'YYYY-MM-DD') GROUP BY DIRECTION, STATUS ORDER BY FILES_COUNT DESC",
+        "params": [
+          {"name": "from_date", "type": "string", "description": "Inclusive start, YYYY-MM-DD."},
+          {"name": "to_date",   "type": "string", "description": "Exclusive end, YYYY-MM-DD."}
+        ],
+        "returns": "DataFrame: DIRECTION (I/O), STATUS (BG text), FILES_COUNT, DAYS_OBSERVED."
       }
     }
   }
