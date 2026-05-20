@@ -9,15 +9,194 @@
     }
   },
   "CARD_TRANSACTIONS": {
-    "description": "Card payment transactions. Primary table for card transaction analysis. NOTE (DEV): CARD_AMOUNT is mostly 0 in the DEV snapshot — use AMOUNT_LOCAL_CCY for monetary analysis.",
+    "description": "Card payment transactions. Primary table for card transaction analysis. NOTE (DEV): CARD_AMOUNT is mostly 0 in the DEV snapshot - use AMOUNT_LOCAL_CCY for monetary analysis.",
     "columns": {
       "TRANSACTION_ID": "Internal transaction identifier. Primary key.",
-      "DESCRIPTION": "Free-text transaction description (often in Bulgarian Cyrillic). Used for classification. ATM transactions start with 'АТМ'. Includes timestamp suffix — group by prefix for location analysis.",
+      "DESCRIPTION": "Free-text transaction description (often in Bulgarian Cyrillic). Used for classification. ATM transactions start with 'АТМ'. Includes timestamp suffix - group by prefix for location analysis.",
       "CARD_AMOUNT": "Transaction amount in the original card currency. CAUTION: equals 0 for most rows in the DEV snapshot. Only use when user explicitly asks for card-currency amount.",
       "CARD_CURRENCY": "Original card transaction currency (ISO numeric). 975=BGN, 978=EUR, 840=USD.",
-      "AMOUNT_LOCAL_CCY": "Transaction amount converted to local currency (BGN). Preferred column for monetary analysis — contains the real amount even when CARD_AMOUNT=0.",
-      "TRANSACTION_DATE": "Date and time when the transaction was executed (Oracle DATE). DEV data is from 2022 — queries for 'this week' or 'last month' will return no rows.",
-      "SETTLEMENT_DATE": "Date when the transaction was settled by the bank. May differ from TRANSACTION_DATE."
+      "AMOUNT_LOCAL_CCY": "Transaction amount converted to local currency (BGN). Preferred column for monetary analysis - contains the real amount even when CARD_AMOUNT=0.",
+      "TRANSACTION_DATE": "Date and time when the transaction was executed (Oracle DATE). DEV data ends 2023-11-10 - queries for 'this week' or 'last month' against SYSDATE will return no rows.",
+      "SETTLEMENT_DATE": "Date when the transaction was settled by the bank. May differ from TRANSACTION_DATE.",
+      "CARD_COMMUNITY": "Payment scheme of the card used. 'EUR' = Mastercard (Europe MC includes the local BCARD-on-MC product), 'VIS' = Visa, 'AME' = American Express. BCARD is NOT a separate value in DEV.",
+      "MERCHANT_IDN": "External merchant identifier (VARCHAR2(10)). FK to MERCHANTS.MERCHANT_IDN. ~52% of rows have a merchant; the rest are ATM / system transactions (no merchant). Use INNER JOIN to MERCHANTS to exclude ATM rows automatically."
+    }
+  },
+  "CARD_AUTHORIZATIONS": {
+    "description": "Bank-issued card authorizations (issuer view). One row per authorization. Source of bank-side authorization processing latency: TIME_STAMP (record received) vs SEND_DATE (response sent toward BORICA). NOT the full POS-to-network round-trip - this is the internal pipeline. Populated 2023-01-03 onwards in DEV (~2.5M rows).",
+    "columns": {
+      "AUTHORIZATION_ID": "Surrogate numeric primary key.",
+      "CARD_NO": "PAN of the authorized card. PII - never surface raw.",
+      "RETRIEVAL_REF": "ISO 8583 DE 037 retrieval reference number from the acquirer.",
+      "ACQUIRER_IDN": "ISO 8583 DE 032 acquiring-institution identification code.",
+      "ACCEPTOR_IDN": "ISO 8583 DE 042 card acceptor (merchant) identification code.",
+      "DEVICE_IDN": "Terminal identifier (DE 041).",
+      "AUTHORIZATION_DATE": "Original transaction date from the network message (DATE).",
+      "AUTHORIZATION_CODE": "Authorization identification response (DE 038) - the approval code returned.",
+      "AUTHORIZATION_SUM": "Transaction amount in the acquirer's currency (DE 004).",
+      "AUTHORIZATION_TYPE": "CHAR(1). '5' = On-Us (our card, domestic); '9' = Issuing (our card, foreign acquirer routed via BORICA).",
+      "CARD_COMMUNITY": "Scheme of the card. 'VIS' = Visa, 'EUR' = Mastercard (DE 011 card belonging).",
+      "TIME_STAMP": "TIMESTAMP(6). Exact moment the authorization record entered the database ('точно време на постъпване на записа в базата'). Use as the START of bank-side processing latency.",
+      "SEND_DATE": "TIMESTAMP(6). Moment the outbound message was sent toward BORICA ('дата на която е изпратено съобщението към BORIKA'). Use as the END of bank-side processing latency. NULL on ~0.0004% of rows.",
+      "TRANSACTION_ID": "FK to CARD_TRANSACTIONS - set after the authorization has been matched to a settlement / financial transaction.",
+      "SEND_FILE_ID": "Identifier of the BORICA outbound file the message was packaged in.",
+      "FILE_TYPE": "Outbound file type code."
+    }
+  },
+  "STG_TRANSACTIONS_BORICA_EO": {
+    "description": "Staging table for raw BORICA card-network messages (authorizations, settlements, declines, journal entries). Primary source for authorization-performance analysis and decline-reason breakdowns (UC-02). One row per file record - includes ISO 8583 fields with original BORICA positional indexes in brackets [NN] in column descriptions. Use TIME_STAMP (TIMESTAMP) for date filtering, NOT the VARCHAR2 TRANSACTION_DATE field.",
+    "columns": {
+      "TRANSACTION_CODE": "File-record type. 'A' = authorization approved, 'N' = authorization declined (decline reason in AUTH_RESPONCE_CODE), 'D' = settlement / financial transaction (clears an earlier 'A' - NOT an independent approval), 'B' = balance inquiry / journal. CRITICAL: for approval-rate analysis include ONLY 'A' and 'N' - adding 'D' double-counts approvals.",
+      "AUTH_RESPONCE_CODE": "ISO 8583 authorization response code. Populated on 'N' (declined) rows. Common codes: 51 = Insufficient funds, 57 = Transaction not permitted, 14 = Invalid card, 05 = Do not honor, 65 = Exceeds withdrawal limit, 55 = Incorrect PIN. Trim and bucket blanks as 'UNKNOWN' before reporting.",
+      "POS_ENTRY_MODE": "ISO 8583 point-of-service entry mode (4 chars). LIKE '07%' => contactless. Use as primary signal for channel classification.",
+      "MERCHANT_TYPE": "Merchant Category Code (MCC). '6011' = ATM cash withdrawal. Use AFTER POS_ENTRY_MODE check when classifying channel (Contactless / ATM / POS).",
+      "TERMINAL_TYPE": "BORICA-internal two-digit terminal type code. Complements MERCHANT_TYPE for channel breakdowns.",
+      "TIME_STAMP": "Timestamp when BORICA recorded the message (TIMESTAMP(6)). PREFERRED date column for filtering - the VARCHAR TRANSACTION_DATE/TRANSACTION_TIME fields require parsing.",
+      "TRANSACTION_DATE": "Original BORICA-file transaction date as VARCHAR2(8) 'YYYYMMDD'. Prefer TIME_STAMP for filtering.",
+      "PRIMARY_ACCOUNT_NUMBER": "PAN (card number) from BORICA file. PII - never surface raw.",
+      "ACQUIRER_TRANSACTION_AMOUNT": "Transaction amount in the acquirer's currency. Use with ACQUIRER_CURRENCY_CODE.",
+      "CARD_TRANSACTION_AMOUNT": "Transaction amount in the card's currency. Use with CARD_CURRENCY_CODE.",
+      "CARD_ACCEPTOR_NAME": "Merchant name from the file. May be uppercased / abbreviated.",
+      "CARD_ACCEPTOR_LOCATION": "Merchant location string from the file."
+    }
+  },
+  "CARDS": {
+    "description": "Issued cards. One row per card. Primary key: CARD_ID (not shown in shortlist below). Used for portfolio metrics (active, new, closed, churn).",
+    "columns": {
+      "STATUS": "Card lifecycle status. CHAR(1). '0' = transient / not yet produced, '1' = in production, '2' = active (issued, usable - the 'live' state), '3' = closed / canceled. NOTE: codes are digit strings, not 'A'/'N'.",
+      "STATUS_DATE": "Date of the last status change. For closed cards (STATUS='3') this is the close date - filter on this for 'closed in period' queries.",
+      "PREVIOUS_STATUS": "Status value before the most recent change.",
+      "PREVIOUS_STATUS_DATE": "Date of the previous status change.",
+      "OPEN_DATE": "Date the card was opened / issued. Use for 'new cards in period' queries.",
+      "PRODUCT_ID": "FK to CARD_PRODUCTS.PRODUCT_ID. Resolves to product name via JOIN.",
+      "OFFICE_OWNER_ID": "FK to OFFICES.OFFICE_ID - the issuing office that owns the card. Use for regional / branch distribution of the active portfolio.",
+      "OFFICE_REQUEST_ID": "FK to OFFICES.OFFICE_ID - office where the card was requested (may differ from owner).",
+      "OFFICE_RECEIVING_ID": "FK to OFFICES.OFFICE_ID - office where the card was delivered.",
+      "REASON_CLOSE_ID": "FK to CARD_REASON_CLOSE.CLOSE_REASON_ID (VARCHAR2). ~50% of closed cards in DEV have NULL here - bucket as '(none specified)' on display.",
+      "REASON_BLOCK_UNBLOCK_ID": "FK to the reason taxonomy for block/unblock events (when applicable)."
+    }
+  },
+  "CARD_PRODUCTS": {
+    "description": "Card products catalog (table description in source: 'Картови продукти'). One row per product. Joined from CARDS via PRODUCT_ID for product-name resolution.",
+    "columns": {
+      "PRODUCT_ID": "Surrogate primary key (NUMBER). Joined to CARDS.PRODUCT_ID.",
+      "NAME": "Product display name (e.g. 'MasterCard Debit PayPass - Consumer', 'Bcard local - Consumer'). Use this in GROUP BY for portfolio reports.",
+      "BIN": "Bank Identification Number (6 chars) - the leading BIN of card numbers issued under this product.",
+      "COMMUNITY_ID": "Card scheme / community identifier (raw code).",
+      "IS_CREDIT_CARD": "'Y' = credit card, 'N' = debit card.",
+      "IS_PAYROLL": "'Y' = payroll product (cards issued via employer scheme).",
+      "IS_ACTIVE": "'Y' = new cards can still be issued under this product."
+    }
+  },
+  "MERCHANTS": {
+    "description": "Bank merchants (acceptors) - merchant master with one row per merchant terminal/contract. Joined from CARD_TRANSACTIONS via MERCHANT_IDN. Source description: 'Таблица с търговци клиенти на банката, които имат инсталирани устройства при тях'.",
+    "columns": {
+      "MERCHANT_ID": "Surrogate numeric primary key.",
+      "MERCHANT_IDN": "External merchant identifier (VARCHAR2(10)) - the FK actually used to join from CARD_TRANSACTIONS.MERCHANT_IDN. Both sides are strings; do not cast to numeric.",
+      "NAME": "Merchant display name (VARCHAR2(50)).",
+      "MC_ID": "FK to MERCHANT_CATEGORIES (merchant category / MCC group).",
+      "ACCEPT_CARD_COMMUNITY": "Which scheme cards this merchant accepts. 'VIS' = Visa + local; 'EUR' = Mastercard + local; 'E_V' = all; 'LOC' = local only.",
+      "CURRENCY_CODE": "ISO numeric currency the merchant settles in.",
+      "STATUS": "'Y' = merchant can initiate transactions; 'N' = blocked.",
+      "IS_ACTIVE": "Logical delete flag. 'Y' = active row; 'N' = soft-deleted.",
+      "OFFICE_ID": "FK to OFFICES - the bank office that signed up this merchant.",
+      "BULSTAT": "Bulgarian company tax id (Булстат)."
+    }
+  },
+  "MC_IRF_ACQUIRING_TT140": {
+    "description": "Mastercard TT140 acquiring interchange reconciliation aggregates. One row per acquired-volume bucket per settlement day. In DEV all 5308 rows carry DESCRIPTION='FIRST PRES. TOTAL' (first-presentment totals); split is by currency + CR/DR direction. CCY is ISO numeric: 978=EUR, 840=USD (no BGN aggregates in DEV). Used by UC-03 Mastercard interchange summaries.",
+    "columns": {
+      "DESCRIPTION": "Bucket type / report-row label from the TT140 file (VARCHAR2(200)). DEV contains only 'FIRST PRES. TOTAL'.",
+      "COUNTS": "Number of presentments in the bucket.",
+      "RECONT_AMOUNT": "Reconciliation amount in CCY for the bucket (gross presentment volume).",
+      "D_C_INDICATOR": "Credit / debit direction of RECONT_AMOUNT. 'CR' = credit to acquirer, 'DR' = debit to acquirer (chargebacks / fees).",
+      "CCY": "ISO numeric currency for RECONT_AMOUNT. 978 = EUR, 840 = USD (DEV: no BGN).",
+      "FEE": "Interchange fee amount in FEE_CCY for the bucket.",
+      "FEE_D_C_INDICATOR": "Credit / debit direction of FEE. 'CR' = fee paid TO bank, 'DR' = fee paid BY bank.",
+      "FEE_CCY": "ISO numeric currency of FEE (DEV: always matches CCY).",
+      "SETTLEMENT_DATE": "Mastercard settlement date as VARCHAR2(6) 'YYMMDD' (e.g. '231109' = 2023-11-09). When filtering by a calendar window convert with TO_DATE(SETTLEMENT_DATE,'YYMMDD') or compare as strings 'YYMMDD'.",
+      "FROM_FILE_ID": "Identifier of the incoming TT140 file.",
+      "SEND_FILE_ID": "Identifier of the outbound file used to forward the data downstream (CORE).",
+      "TIME_STAMP": "Row ingest timestamp (TIMESTAMP(6))."
+    }
+  },
+  "BORICA_SETTLEMENT": {
+    "description": "Daily BORICA card-network settlement aggregates (BG-language source comments). One row per file batch per settlement day - DEV has 432 rows from 2023, FILE_TYPE always 'NO', IS_PROCESSES='Y', no error rows. Used by UC-04 BORICA daily net-position reports.",
+    "columns": {
+      "SETTLEMENT_DATE": "BORICA settlement date (Oracle DATE). Use directly with TO_DATE(:from_date,'YYYY-MM-DD') range filters.",
+      "DT_COUNT": "Брой ДЕБИТ транзакции - number of debit-side transactions in the file batch.",
+      "DT_SUM": "Обща сума на ДЕБИТ транзакциите (NUMBER(12,2)) - total debit amount in BGN.",
+      "DT_TAX": "Междубанкови такси ДЕБИТ - interbank fees on the debit side.",
+      "CT_COUNT": "Брой КРЕДИТ транзакции - number of credit-side transactions in the file batch.",
+      "CT_SUM": "Обща сума на КРЕДИТ транзакциите (NUMBER(12,2)) - total credit amount in BGN. Net position per day = SUM(CT_SUM) - SUM(DT_SUM).",
+      "CT_TAX": "Междубанкови такси КРЕДИТ - interbank fees on the credit side.",
+      "FROM_FILE_ID": "Идентификатор на файла с който е постъпил записа.",
+      "FILE_TYPE": "Тип на файла (VARCHAR2(2)). DEV: always 'NO'.",
+      "TRN_ID": "Идентификатор на транзакцията.",
+      "IS_PROCESSES": "Дали е подаден към CORE: 'Y'=обработен, 'N'=необработен. DEV: always 'Y'.",
+      "SEQ_NO_UPL": "Пореден номер на опит за upload към Core.",
+      "CORE_REF_NO": "Идентификатор на транзакцията в CORE SYSTEM.",
+      "ERR_CODE": "Код на грешка при upload (NULL when OK). Filter `ERR_CODE IS NOT NULL` for failed rows.",
+      "ERR_MESS": "Текст на грешка при upload (NULL when OK)."
+    }
+  },
+  "VISA_SETTLEMENT": {
+    "description": "Daily Visa settlement aggregates parsed from VSS reports. One row per (REPORT_TYPE, SUMMARY_TYPE, CCY, REGION, INDICATOR) bucket per settlement day - DEV ~64K rows for 2023. Used by UC-04 Visa settlement summaries.",
+    "columns": {
+      "ID": "Surrogate primary key.",
+      "REPORT_TYPE": "Visa VSS report identifier (VARCHAR2(5)). DEV values: 'V4130' (55716 rows, interchange detail), 'V4140' (5772, charges summary), 'V4120' (2526, summary by clearing currency).",
+      "SUMMARY_TYPE": "Visa VSS summary-type code (VARCHAR2(2)). DEV: '10' for V4130/V4120, '09' for V4140.",
+      "CCY": "ISO numeric currency for AMT_SETTLEMENT (VARCHAR2(3)).",
+      "REQION": "Visa region code (VARCHAR2(4)) - column name is misspelled in source ('REQION', NOT 'REGION'). Quote carefully.",
+      "CNT": "Number of transactions in the bucket.",
+      "AMT_SETTLEMENT": "Bucket settlement amount in CCY.",
+      "AMT_SETTLEMENT_INDICATOR": "Credit/debit direction (VARCHAR2(2)). 'CR' (55126 rows) = credit to bank, 'DB' (1356) = debit from bank, '  ' two-space blank (7532) = neutral / informational subtotal. Trim before grouping.",
+      "DT_AMT_CHARGE": "Debit side of charge / fee amount.",
+      "CT_AMT_CHARGE": "Credit side of charge / fee amount.",
+      "FROM_FILE_ID": "Identifier of the incoming VSS file.",
+      "IS_WORKED": "Processing flag (CHAR(1)).",
+      "SETTLEMENT_DATE": "Visa settlement date as VARCHAR2(8) 'YYYYMMDD' (e.g. '20231110'). Convert with TO_DATE(SETTLEMENT_DATE,'YYYYMMDD') for range filtering.",
+      "REPORT_SUBTYPE": "Optional report sub-type code.",
+      "IS_REVERSAL": "'Y' = reversal row, 'N' = forward presentment. ~0.6% of DEV rows are reversals.",
+      "DESCR": "Free-text description of the bucket.",
+      "TIME_STAMP": "Row ingest timestamp (TIMESTAMP(6)).",
+      "DIRECTION": "Settlement direction (CHAR(1)). '1' = acquiring, '2' = issuing, '3' = other. DEV: 63992 rows are acquiring ('1'), 22 are 'other' ('3'); no issuing rows in DEV.",
+      "BANK_IDN": "Visa BIN / bank identification number."
+    }
+  },
+  "REPORT_FILES_PROCESSED_V": {
+    "description": "View over the card-network file processing journal. One row per (file, processing attempt) - DEV has 17425 rows, ~99.7% successful. Used by UC-04 file-processing status reports.",
+    "columns": {
+      "FILE_NAME": "Original file name (VARCHAR2(3978)) - includes the file-type prefix (TT140, TTN70, BI, TI, EO, MO, MI, TO, UO-*).",
+      "PROCESS_DATE": "Date the file was processed (Oracle DATE). Preferred filter column.",
+      "TIME_STAMP": "Exact processing timestamp (TIMESTAMP(9)).",
+      "STATUS": "Bulgarian-text status. 'Обработен' (17367) = processed OK, 'Грешка при обработка' (58) = processing error. Compare against the literal Bulgarian strings, NOT 'OK'/'ERROR'.",
+      "ERROR_MSG": "Error detail (VARCHAR2(4000)) - populated only when STATUS='Грешка при обработка'.",
+      "DIRECTION": "Direction of the file (CHAR(1)). 'I' = incoming (11225 rows, files received from BORICA / Mastercard / Visa), 'O' = outgoing (6200, files sent towards the network).",
+      "PROCESS_NAME": "Bulgarian description of the file-type pipeline that handled the file (e.g. 'TT140_Обработка на файл от MASTERCARD', 'EO- Обработка на ЕО файл от Борика', 'TI- Извеждане на TI файл към БОРИКА')."
+    }
+  },
+  "OFFICES": {
+    "description": "Bank branch / sales-point dictionary. One row per office (DEV: 185, all active). Joined from CARDS (OFFICE_OWNER_ID / OFFICE_REQUEST_ID / OFFICE_RECEIVING_ID) and MERCHANTS (OFFICE_ID) on OFFICES.OFFICE_ID. Used by UC-05 portfolio-by-branch breakdowns.",
+    "columns": {
+      "OFFICE_ID": "Идентификатор на офиса (точка на продажба), сурогатен ключ (NUMBER, S_OFFICE sequence). Primary key - join target from CARDS / MERCHANTS.",
+      "OFFICE_NO": "Идентификатор на офиса за пред основната банкова система (VARCHAR2(8)).",
+      "BRANCH_CODE": "Идентификатор на офиса за пред външния свят - номер на банковия клон (VARCHAR2(8)).",
+      "EMBOSSMENT_BRANCH_CODE": "Номер под който банковият клон е регистриран при изработващата пластиката организация (VARCHAR2(2)).",
+      "NAME": "Наименование на офиса - use this for human-readable groupings.",
+      "LAST_USER": "Последен потребител, променял записа.",
+      "IS_ACTIVE": "Активен ли е офисът. 'Y' = могат да се откриват клиенти/сметки/карти; 'N' = не могат. DEV: all 185 rows are 'Y'.",
+      "IS_DEFAULT": "'Y' = офис по подразбиране при откриване на карти.",
+      "ADDRESS": "Адрес (custom Oracle ADDRESS object type - do NOT SELECT it directly in cross-DB code).",
+      "SUPERVISOR_NAME": "Име на супервайзора.",
+      "SUPERVISOR_EMAIL": "Email на супервайзора."
+    }
+  },
+  "CARD_REASON_CLOSE": {
+    "description": "Card-closure reason taxonomy (BG). Two-column lookup: CLOSE_REASON_ID (VARCHAR2(2)) -> REASON_TEXT (Bulgarian). Joined from CARDS.REASON_CLOSE_ID. Note: ~50% of closed cards in DEV have NULL REASON_CLOSE_ID - bucket as '(none specified)' on display.",
+    "columns": {
+      "CLOSE_REASON_ID": "Идентификатор на причината - първичен ключ (VARCHAR2(2)). Single-character codes plus digit codes. Known DEV values: '0'=Задържана карта от АТМ, '3'=Предсрочно закриване, '8'=Компрометирана карта, '9'=Изгубена/Открадната карта, 'D'=Починал клиент, 'E'=Изтичане срок на валидност, 'F'=Сменено име, 'G'=Сгрешено име, 'H'=Отказ от карта/90 дни, 'J'=Забравен ПИН код, 'M'=Служебно-Дефектирала карта, 'P'=Разменен ПИН код, 'U'=По вина на клиента, 'X'=Разменени карти, 'Y'=Служебно-компрометирана карта.",
+      "REASON_TEXT": "Описание на причината (Bulgarian, VARCHAR2(1000))."
     }
   }
 }
