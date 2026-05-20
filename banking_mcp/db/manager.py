@@ -754,98 +754,110 @@ class DatabaseManager:
         if conn_info.get("db_type", "").lower() != "oracle":
             return {}
 
+        # The single self-join across ALL_CONSTRAINTS + ALL_CONS_COLUMNS (fk
+        # side + pk side) is correct but slow on multi-tenant Oracle, often
+        # blowing past 10s on a cold cache. We split into three indexed
+        # queries that each filter on (owner, table_name) or (owner,
+        # constraint_name) and merge in Python. Per-FK parent lookups keep
+        # cross-schema FK support intact (would be lost if we pinned
+        # pk.owner = :owner).
         schema_name = _get_oracle_schema(conn_info)
         db_conn = _open_connection(conn_info)
         try:
             if schema_name:
-                pk_sql = """
-                    SELECT c.constraint_name, cc.column_name
+                headers_sql = """
+                    SELECT constraint_name, constraint_type,
+                           r_owner, r_constraint_name, delete_rule
+                    FROM all_constraints
+                    WHERE owner = :owner
+                      AND table_name = :t
+                      AND constraint_type IN ('P', 'R')
+                """
+                cols_sql = """
+                    SELECT constraint_name, column_name, position
+                    FROM all_cons_columns
+                    WHERE owner = :owner
+                      AND table_name = :t
+                    ORDER BY constraint_name, position
+                """
+                parent_sql = """
+                    SELECT c.table_name, cc.column_name
                     FROM all_constraints c
                     JOIN all_cons_columns cc
                       ON c.owner = cc.owner
                      AND c.constraint_name = cc.constraint_name
-                    WHERE c.constraint_type = 'P'
-                      AND c.owner = :owner
-                      AND c.table_name = :t
+                    WHERE c.owner = :owner
+                      AND c.constraint_name = :cname
                     ORDER BY cc.position
-                """
-                fk_sql = """
-                    SELECT fk.constraint_name, fkc.column_name,
-                           pk.owner, pk.table_name, pkc.column_name, fk.delete_rule
-                    FROM all_constraints fk
-                    JOIN all_cons_columns fkc
-                      ON fk.owner = fkc.owner
-                     AND fk.constraint_name = fkc.constraint_name
-                    JOIN all_constraints pk
-                      ON fk.r_owner = pk.owner
-                     AND fk.r_constraint_name = pk.constraint_name
-                    JOIN all_cons_columns pkc
-                      ON pk.owner = pkc.owner
-                     AND pk.constraint_name = pkc.constraint_name
-                     AND pkc.position = fkc.position
-                    WHERE fk.constraint_type = 'R'
-                      AND fk.owner = :owner
-                      AND fk.table_name = :t
-                    ORDER BY fk.constraint_name, fkc.position
                 """
                 params = {"owner": schema_name, "t": table_name.upper()}
             else:
-                pk_sql = """
-                    SELECT c.constraint_name, cc.column_name
+                headers_sql = """
+                    SELECT constraint_name, constraint_type,
+                           NULL, r_constraint_name, delete_rule
+                    FROM user_constraints
+                    WHERE table_name = :t
+                      AND constraint_type IN ('P', 'R')
+                """
+                cols_sql = """
+                    SELECT constraint_name, column_name, position
+                    FROM user_cons_columns
+                    WHERE table_name = :t
+                    ORDER BY constraint_name, position
+                """
+                parent_sql = """
+                    SELECT c.table_name, cc.column_name
                     FROM user_constraints c
                     JOIN user_cons_columns cc
                       ON c.constraint_name = cc.constraint_name
-                    WHERE c.constraint_type = 'P'
-                      AND c.table_name = :t
+                    WHERE c.constraint_name = :cname
                     ORDER BY cc.position
-                """
-                fk_sql = """
-                    SELECT fk.constraint_name, fkc.column_name,
-                           NULL, pk.table_name, pkc.column_name, fk.delete_rule
-                    FROM user_constraints fk
-                    JOIN user_cons_columns fkc
-                      ON fk.constraint_name = fkc.constraint_name
-                    JOIN user_constraints pk
-                      ON fk.r_constraint_name = pk.constraint_name
-                    JOIN user_cons_columns pkc
-                      ON pk.constraint_name = pkc.constraint_name
-                     AND pkc.position = fkc.position
-                    WHERE fk.constraint_type = 'R'
-                      AND fk.table_name = :t
-                    ORDER BY fk.constraint_name, fkc.position
                 """
                 params = {"t": table_name.upper()}
 
-            _, pk_rows = _run_select(conn_info, db_conn, pk_sql, params)
-            _, fk_rows = _run_select(conn_info, db_conn, fk_sql, params)
+            _, header_rows = _run_select(conn_info, db_conn, headers_sql, params)
+            _, col_rows = _run_select(conn_info, db_conn, cols_sql, params)
+
+            cols_by_cname: dict[str, list[str]] = {}
+            for cname, col, _pos in col_rows:
+                cols_by_cname.setdefault(cname, []).append(col)
+
+            primary_key: dict | None = None
+            fks: list[dict] = []
+            for cname, ctype, r_owner, r_cname, delete_rule in header_rows:
+                if ctype == "P":
+                    primary_key = {
+                        "name": cname,
+                        "columns": cols_by_cname.get(cname, []),
+                    }
+                    continue
+
+                # 'R' - resolve referenced (parent) table + columns
+                if schema_name:
+                    parent_params = {"owner": r_owner, "cname": r_cname}
+                else:
+                    parent_params = {"cname": r_cname}
+                _, parent_rows = _run_select(
+                    conn_info, db_conn, parent_sql, parent_params
+                )
+                parent_table = parent_rows[0][0] if parent_rows else None
+                parent_cols = [row[1] for row in parent_rows]
+                fks.append(
+                    {
+                        "name": cname,
+                        "columns": cols_by_cname.get(cname, []),
+                        "references": {
+                            "owner": r_owner,
+                            "table": parent_table,
+                            "columns": parent_cols,
+                        },
+                        "delete_rule": delete_rule,
+                    }
+                )
         finally:
             _close_quietly(db_conn)
 
-        primary_key: dict | None = None
-        if pk_rows:
-            primary_key = {
-                "name": pk_rows[0][0],
-                "columns": [row[1] for row in pk_rows],
-            }
-
-        fk_map: dict[str, dict] = {}
-        for cname, child_col, r_owner, r_table, r_col, delete_rule in fk_rows:
-            entry = fk_map.setdefault(
-                cname,
-                {
-                    "name": cname,
-                    "columns": [],
-                    "references": {"owner": r_owner, "table": r_table, "columns": []},
-                    "delete_rule": delete_rule,
-                },
-            )
-            entry["columns"].append(child_col)
-            entry["references"]["columns"].append(r_col)
-
-        return {
-            "primary_key": primary_key,
-            "foreign_keys": list(fk_map.values()),
-        }
+        return {"primary_key": primary_key, "foreign_keys": fks}
 
     def get_schema_keys(self, connection: str | None = None) -> dict:
         """Return PK + FK graph for the whole schema (Oracle only).

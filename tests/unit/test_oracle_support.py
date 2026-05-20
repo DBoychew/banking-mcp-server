@@ -133,27 +133,41 @@ def _patch_oracle_manager(monkeypatch, conn_info, run_select_impl):
     return manager.DatabaseManager()
 
 
-def test_get_table_keys_returns_pk_and_fk_with_schema(monkeypatch):
+def _table_keys_dispatcher(headers, cols, parent_by_cname):
+    """Build a fake _run_select that routes the 3 query shapes used by
+    get_table_keys: headers (constraints), cols (cons_columns), parent
+    lookup (by :cname). Captures all calls for assertion."""
     calls: list[tuple[str, dict | None]] = []
 
     def fake_run_select(conn_info, db_conn, sql, params=None):
         calls.append((sql.strip(), params))
-        if "constraint_type = 'P'" in sql:
-            return ["constraint_name", "column_name"], [("PK_CARDS", "CARD_ID")]
-        return (
-            ["constraint_name", "column_name", "owner", "table_name", "column_name", "delete_rule"],
-            [("FK_CARDS_ACCOUNT", "ACCOUNT_ID", "SCARDS", "ACCOUNTS", "ID", "CASCADE")],
-        )
+        sql_low = sql.lower()
+        if ":cname" in sql_low:
+            cname = (params or {}).get("cname")
+            return [], parent_by_cname.get(cname, [])
+        if "cons_columns" in sql_low:
+            return [], cols
+        return [], headers
 
+    return fake_run_select, calls
+
+
+def test_get_table_keys_returns_pk_and_fk_with_schema(monkeypatch):
+    fake, calls = _table_keys_dispatcher(
+        headers=[
+            ("PK_CARDS", "P", None, None, None),
+            ("FK_CARDS_ACCOUNT", "R", "SCARDS", "PK_ACCOUNTS", "CASCADE"),
+        ],
+        cols=[
+            ("PK_CARDS", "CARD_ID", 1),
+            ("FK_CARDS_ACCOUNT", "ACCOUNT_ID", 1),
+        ],
+        parent_by_cname={"PK_ACCOUNTS": [("ACCOUNTS", "ID")]},
+    )
     db = _patch_oracle_manager(
         monkeypatch,
-        {
-            "name": "scards",
-            "db_type": "oracle",
-            "dsn": "h/s",
-            "schema": "scards",
-        },
-        fake_run_select,
+        {"name": "scards", "db_type": "oracle", "dsn": "h/s", "schema": "scards"},
+        fake,
     )
 
     keys = db.get_table_keys("scards", "cards")
@@ -167,24 +181,28 @@ def test_get_table_keys_returns_pk_and_fk_with_schema(monkeypatch):
             "delete_rule": "CASCADE",
         }
     ]
-    # both queries bound :owner + :t and uppercased the table name
-    assert all(params == {"owner": "SCARDS", "t": "CARDS"} for _, params in calls)
-    assert "all_constraints" in calls[0][0]
+    # 1 headers + 1 cols + 1 parent lookup = 3 queries
+    assert len(calls) == 3
+    # headers + cols both filter by (owner, table_name)
+    assert calls[0][1] == {"owner": "SCARDS", "t": "CARDS"}
+    assert calls[1][1] == {"owner": "SCARDS", "t": "CARDS"}
+    # parent lookup binds the referenced constraint name
+    assert calls[2][1] == {"owner": "SCARDS", "cname": "PK_ACCOUNTS"}
 
 
 def test_get_table_keys_composite_pk(monkeypatch):
-    def fake_run_select(conn_info, db_conn, sql, params=None):
-        if "constraint_type = 'P'" in sql:
-            return [], [
-                ("PK_CARD_AUTH", "CARD_ID"),
-                ("PK_CARD_AUTH", "AUTH_DATE"),
-            ]
-        return [], []
-
+    fake, _ = _table_keys_dispatcher(
+        headers=[("PK_CARD_AUTH", "P", None, None, None)],
+        cols=[
+            ("PK_CARD_AUTH", "CARD_ID", 1),
+            ("PK_CARD_AUTH", "AUTH_DATE", 2),
+        ],
+        parent_by_cname={},
+    )
     db = _patch_oracle_manager(
         monkeypatch,
         {"name": "scards", "db_type": "oracle", "dsn": "h/s", "schema": "SCARDS"},
-        fake_run_select,
+        fake,
     )
 
     keys = db.get_table_keys("scards", "card_auth")
@@ -196,18 +214,18 @@ def test_get_table_keys_composite_pk(monkeypatch):
 
 
 def test_get_table_keys_composite_fk(monkeypatch):
-    def fake_run_select(conn_info, db_conn, sql, params=None):
-        if "constraint_type = 'P'" in sql:
-            return [], []
-        return [], [
-            ("FK_X", "A", "S", "PARENT", "PA", None),
-            ("FK_X", "B", "S", "PARENT", "PB", None),
-        ]
-
+    fake, _ = _table_keys_dispatcher(
+        headers=[("FK_X", "R", "S", "PK_PARENT", None)],
+        cols=[
+            ("FK_X", "A", 1),
+            ("FK_X", "B", 2),
+        ],
+        parent_by_cname={"PK_PARENT": [("PARENT", "PA"), ("PARENT", "PB")]},
+    )
     db = _patch_oracle_manager(
         monkeypatch,
         {"name": "scards", "db_type": "oracle", "dsn": "h/s", "schema": "S"},
-        fake_run_select,
+        fake,
     )
 
     keys = db.get_table_keys("scards", "child")
@@ -236,8 +254,8 @@ def test_get_table_keys_uses_user_views_when_no_schema(monkeypatch):
     )
 
     db.get_table_keys("scards", "cards")
-    assert all("user_constraints" in sql for sql in captured)
-    assert all("all_constraints" not in sql for sql in captured)
+    assert all("user_constraints" in sql or "user_cons_columns" in sql for sql in captured)
+    assert all("all_constraints" not in sql and "all_cons_columns" not in sql for sql in captured)
 
 
 def test_get_table_keys_returns_empty_for_non_oracle(monkeypatch):
