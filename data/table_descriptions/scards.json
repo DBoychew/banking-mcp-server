@@ -19,8 +19,19 @@
       "TRANSACTION_DATE": "Date and time when the transaction was executed (Oracle DATE). DEV data ends 2023-11-10 - queries for 'this week' or 'last month' against SYSDATE will return no rows.",
       "SETTLEMENT_DATE": "Date when the transaction was settled by the bank. May differ from TRANSACTION_DATE.",
       "CARD_COMMUNITY": "Payment scheme of the card used. 'EUR' = Mastercard (Europe MC includes the local BCARD-on-MC product), 'VIS' = Visa, 'AME' = American Express. BCARD is NOT a separate value in DEV.",
-      "MERCHANT_IDN": "External merchant identifier (VARCHAR2(10)). FK to MERCHANTS.MERCHANT_IDN. ~52% of rows have a merchant; the rest are ATM / system transactions (no merchant). Use INNER JOIN to MERCHANTS to exclude ATM rows automatically."
-    }
+      "MERCHANT_IDN": "External merchant identifier (VARCHAR2(10)). FK to MERCHANTS.MERCHANT_IDN. ~52% of rows have a merchant; the rest are ATM / system transactions (no merchant). Use INNER JOIN to MERCHANTS to exclude ATM rows automatically.",
+      "INTERBANK_CHARGE_FEE": "Per-transaction interchange amount (acquirer<->issuer netting) in BGN. Signed: POSITIVE = received by bank, NEGATIVE = paid by bank. 78% of rows in DEV have a non-zero value. CRITICAL: this is the canonical Visa + Mastercard interchange source for this bank - the dedicated VISA_INT_254 / MC TT140 IRF tables are EMPTY in DEV because the bank has no Visa data-subscription. For interchange income/expense per scheme use this column, not the VSS/TT140 aggregate tables.",
+      "CHARGE_AMOUNT_LOCAL": "Per-transaction cardholder fee in local BGN currency. Income to the bank from the cardholder side. 25% of rows non-zero in DEV. Use for 'cardholder transaction fee income' aggregations.",
+      "CHARGE_AMOUNT_POS_LOCAL": "Per-transaction merchant (POS) fee in local BGN currency. Income to the bank from the merchant/acquiring side. 12% of rows non-zero in DEV. Use for 'merchant transaction fee income' aggregations.",
+      "CHARGE_AMOUNT_CCY_CONV_LOCAL": "Per-transaction currency-conversion fee (Piraeus FX fee) in local BGN currency. 2.4% of rows non-zero in DEV - only on cross-currency transactions. Use for FX-conversion fee income aggregations.",
+      "CARD_COMMUNITY_NOTE": "Source column comment lists VIS / EUR / BOR (Borica) / LOC (local bank with own SUK). DEV actually contains only EUR (78%), VIS (21%), AME (~0.01%, 923 rows); BOR and LOC are defined but absent from this snapshot. Treat 'AME' as a known DEV value when reporting."
+    },
+    "foreign_keys": [
+      {"column": "MERCHANT_IDN", "references": "MERCHANTS.MERCHANT_IDN", "notes": "VARCHAR on both sides; ~52% non-null - rest are ATM/system."},
+      {"column": "CARD_ID", "references": "CARDS.CARD_ID"},
+      {"column": "AUTHORIZATION_ID", "references": "CARD_AUTHORIZATIONS.AUTHORIZATION_ID", "notes": "NULL until the financial transaction is matched against an earlier authorization."},
+      {"column": "ACCOUNT_NO", "references": "ACCOUNTS.ACCOUNT_NO"}
+    ]
   },
   "CARD_AUTHORIZATIONS": {
     "description": "Bank-issued card authorizations (issuer view). One row per authorization. Source of bank-side authorization processing latency: TIME_STAMP (record received) vs SEND_DATE (response sent toward BORICA). NOT the full POS-to-network round-trip - this is the internal pipeline. Populated 2023-01-03 onwards in DEV (~2.5M rows).",
@@ -41,7 +52,10 @@
       "TRANSACTION_ID": "FK to CARD_TRANSACTIONS - set after the authorization has been matched to a settlement / financial transaction.",
       "SEND_FILE_ID": "Identifier of the BORICA outbound file the message was packaged in.",
       "FILE_TYPE": "Outbound file type code."
-    }
+    },
+    "foreign_keys": [
+      {"column": "TRANSACTION_ID", "references": "CARD_TRANSACTIONS.TRANSACTION_ID", "notes": "Populated only after authorization is matched to a financial / settlement row; NULL otherwise."}
+    ]
   },
   "STG_TRANSACTIONS_BORICA_EO": {
     "description": "Staging table for raw BORICA card-network messages (authorizations, settlements, declines, journal entries). Primary source for authorization-performance analysis and decline-reason breakdowns (UC-02). One row per file record - includes ISO 8583 fields with original BORICA positional indexes in brackets [NN] in column descriptions. Use TIME_STAMP (TIMESTAMP) for date filtering, NOT the VARCHAR2 TRANSACTION_DATE field.",
@@ -74,7 +88,14 @@
       "OFFICE_RECEIVING_ID": "FK to OFFICES.OFFICE_ID - office where the card was delivered.",
       "REASON_CLOSE_ID": "FK to CARD_REASON_CLOSE.CLOSE_REASON_ID (VARCHAR2). ~50% of closed cards in DEV have NULL here - bucket as '(none specified)' on display.",
       "REASON_BLOCK_UNBLOCK_ID": "FK to the reason taxonomy for block/unblock events (when applicable)."
-    }
+    },
+    "foreign_keys": [
+      {"column": "PRODUCT_ID", "references": "CARD_PRODUCTS.PRODUCT_ID"},
+      {"column": "OFFICE_OWNER_ID", "references": "OFFICES.OFFICE_ID", "notes": "Issuing office that owns the card; prefer this for branch-distribution metrics."},
+      {"column": "OFFICE_REQUEST_ID", "references": "OFFICES.OFFICE_ID", "notes": "Office where the card was requested."},
+      {"column": "OFFICE_RECEIVING_ID", "references": "OFFICES.OFFICE_ID", "notes": "Office where the card was delivered."},
+      {"column": "REASON_CLOSE_ID", "references": "CARD_REASON_CLOSE.CLOSE_REASON_ID", "notes": "VARCHAR2(2) on both sides. ~50% of closed cards (STATUS='3') in DEV have NULL here."}
+    ]
   },
   "CARD_PRODUCTS": {
     "description": "Card products catalog (table description in source: 'Картови продукти'). One row per product. Joined from CARDS via PRODUCT_ID for product-name resolution.",
@@ -101,7 +122,11 @@
       "IS_ACTIVE": "Logical delete flag. 'Y' = active row; 'N' = soft-deleted.",
       "OFFICE_ID": "FK to OFFICES - the bank office that signed up this merchant.",
       "BULSTAT": "Bulgarian company tax id (Булстат)."
-    }
+    },
+    "foreign_keys": [
+      {"column": "OFFICE_ID", "references": "OFFICES.OFFICE_ID", "notes": "Bank office that signed up the merchant."},
+      {"column": "MC_ID", "references": "MERCHANT_CATEGORIES.MC_ID", "notes": "Target table (MERCHANT_CATEGORIES) is not yet in this descriptions file."}
+    ]
   },
   "MC_IRF_ACQUIRING_TT140": {
     "description": "Mastercard TT140 acquiring interchange reconciliation aggregates. One row per acquired-volume bucket per settlement day. In DEV all 5308 rows carry DESCRIPTION='FIRST PRES. TOTAL' (first-presentment totals); split is by currency + CR/DR direction. CCY is ISO numeric: 978=EUR, 840=USD (no BGN aggregates in DEV). Used by UC-03 Mastercard interchange summaries.",
@@ -191,6 +216,74 @@
       "SUPERVISOR_NAME": "Име на супервайзора.",
       "SUPERVISOR_EMAIL": "Email на супервайзора."
     }
+  },
+  "CHARGE_EVENTS": {
+    "description": "Realized non-transaction card-fee events (BG source: 'Таблица съдържаща събития за таксуване, сума, на таксата, код валута'). One row per chargeable event on a card or account (monthly fees, ATM balance inquiries, new-card issuance, reissuance, close-card, PIN-change fees, etc.). 1.4M rows in DEV; ~93% in STATUS='3' (posted to GL). Used by UC-03 for fee-income aggregation - NOT REPORT_CARD_*_FEE_V views, which only describe tariff configuration.",
+    "columns": {
+      "CHARGE_EVENT_ID": "Surrogate primary key (presentments_seq).",
+      "ACCOUNT_NO": "Account number (VARCHAR2(30)). FK to ACCOUNTS.",
+      "CARD_ID": "FK to CARDS. NULL when the fee is at account level (not tied to a specific card). DEV: ~99% are card-level, ~1% account-level.",
+      "EVENT_IDN": "Event-type code (VARCHAR2(30)). FK to CHARGE_EVENT_TYPES. Common DEV values: MONTHLY_FEE_CARD (820K, top by volume), BALANSATM (467K, ATM balance inquiry), NOT_APPROVED_AUTH (32K), NEW_CARD, REISSUECARD, CHANGE_PIN_ATM, CLOSE_CARD, MGR_FEE_CARD, CARD_NOT_RECEIVED, MONTHLY_FEE_CARD_ADD, CHACK_LAST_5_TRN, NORMALIZATION, FEE_OVERDUE_ONCE, REISSUE_LOST_CARD, NEW_3D_PASS.",
+      "STATUS": "Event lifecycle (CHAR(1)). '0' = arrived (raw), '1' = fee computed (amount populated), '2' = submitted for accounting, '3' = posted to GL (realized income), '4' = submitted for auto-collection by FC. **For realized fee income use STATUS='3'.** STATUS='0' rows have NULL CHARGE_AMOUNT / CHARGE_CURRENCY.",
+      "TIME_STAMP": "Time the event record was created (TIMESTAMP(6)). Earliest in DEV: 2022-12-31. Use TIME_ACCOUNTING for 'income posted' filtering, not this.",
+      "CHARGE_AMOUNT": "Fee amount in account currency (NUMBER(15,2)). Populated when STATUS >= 1.",
+      "CHARGE_CURRENCY_CHAR_CODE": "ISO 3-letter currency code of CHARGE_AMOUNT (in account currency). DEV: ~96% 'BGN', ~0.5% 'EUR', ~4% NULL (STATUS='0' rows).",
+      "TIME_COMPUTING": "Timestamp when STATUS moved 0 -> 1 (fee computed).",
+      "TIME_ACCOUNTING": "Timestamp when STATUS moved 1 -> 2 (fee sent for accounting). **PREFERRED filter for fee-income 'as of period' queries**: STATUS='3' rows are guaranteed to have TIME_ACCOUNTING populated. DEV range: 2023-01-03 .. 2023-11-10.",
+      "TIME_GET_CORE_REF": "Timestamp when STATUS moved 2 -> 3 (CORE reference received from main banking system).",
+      "DESCR": "Free-text basis/description of the charge.",
+      "CORE_REF_NO": "Accounting reference in the CORE banking system (VARCHAR2(100)). Populated when STATUS = '3'.",
+      "MESS_ERR_COMPUTING": "Error message from the compute step (NULL when OK).",
+      "MESS_ERR_ACCOUNTING": "Error message from the accounting step (NULL when OK).",
+      "SEND_FILE_ID": "Outbound file ID if accounting is file-based.",
+      "REGULAR_EVENT_DATE": "Date the event is generated for (used for periodic / monthly fee runs).",
+      "ISSUER_REF_NO": "Card issuer reference.",
+      "IS_REGISTER_DUTY": "'Y' = duty registered in credit module (credit cards only).",
+      "LAST_USER": "User / system that captured the fee.",
+      "SOURCE_ID": "Origin transaction_id when the fee was triggered by a financial message in CARD_TRANSACTIONS (e.g. PIN-change, balance inquiry).",
+      "CHARGE_CURRENCY_CHARGE": "ISO 3-letter currency code in which the fee was defined in the tariff (may differ from CHARGE_CURRENCY_CHAR_CODE if the tariff is set in EUR but charged in BGN).",
+      "CHARGE_AMOUNT_CHARGE": "Fee amount in the tariff currency (NUMBER(15,2)). The 'gross' fee before being converted to account currency."
+    },
+    "foreign_keys": [
+      {"column": "ACCOUNT_NO", "references": "ACCOUNTS.ACCOUNT_NO"},
+      {"column": "CARD_ID", "references": "CARDS.CARD_ID", "notes": "NULL when the fee is at account level (not card-specific). DEV: ~99% card-level, ~1% account-level."},
+      {"column": "EVENT_IDN", "references": "CHARGE_EVENT_TYPES.EVENT_IDN", "notes": "Target table (CHARGE_EVENT_TYPES) is not yet in this descriptions file."},
+      {"column": "SOURCE_ID", "references": "CARD_TRANSACTIONS.TRANSACTION_ID", "notes": "Conditional: populated only when the fee was triggered by a financial message (PIN change, balance check, etc.)."}
+    ]
+  },
+  "MERCHANT_CHARGE_EVENTS": {
+    "description": "Realized non-transaction device/merchant-fee events (BG source: 'Таблица съдържаща събития за таксуване, сума, на таксата, код валута'). One row per chargeable event on a device or merchant (monthly device fees, etc.). 2.5K rows in DEV - much smaller than CHARGE_EVENTS; only DEVICE_MONTH_FEE present, all device-level. Used by UC-03 for device-side fee-income aggregation.",
+    "columns": {
+      "CHARGE_EVENT_ID": "Surrogate primary key.",
+      "ACCOUNT_NO": "Account number (FK to ACCOUNTS) the fee posts to.",
+      "DEVICE_ID": "FK to DEVICE. NULL when the fee is at merchant level (not tied to a specific device). DEV: all device-level.",
+      "MERCHANT_ID": "FK to MERCHANTS. Populated for merchant-level fees.",
+      "EVENT_IDN": "Event-type code. DEV: only DEVICE_MONTH_FEE.",
+      "STATUS": "Event lifecycle (CHAR(1)). Same semantics as CHARGE_EVENTS.STATUS: '0'/'1'/'2'/'3'. **Use STATUS='3' for realized device-fee income.** DEV: 2254 STATUS='3', 241 STATUS='2'.",
+      "TIME_STAMP": "Time the event record was created (TIMESTAMP(6)).",
+      "CHARGE_AMOUNT": "Fee amount in account currency (NUMBER(15,2)).",
+      "CHARGE_CURRENCY_CHAR_CODE": "ISO 3-letter currency code of CHARGE_AMOUNT. DEV: 'BGN' only.",
+      "TIME_COMPUTING": "Timestamp when STATUS moved 0 -> 1.",
+      "TIME_ACCOUNTING": "Timestamp when STATUS moved 1 -> 2. **PREFERRED filter for device-fee 'as of period' queries.** DEV range: 2023-01-10 .. 2023-11-06.",
+      "TIME_GET_CORE_REF": "Timestamp when STATUS moved 2 -> 3.",
+      "DESCR": "Free-text description.",
+      "CORE_REF_NO": "Accounting reference in CORE banking system.",
+      "MESS_ERR_COMPUTING": "Error message from compute step.",
+      "MESS_ERR_ACCOUNTING": "Error message from accounting step.",
+      "SEND_FILE_ID": "Outbound file ID.",
+      "REGULAR_EVENT_DATE": "Date the event is generated for.",
+      "LAST_USER": "User / system that captured the fee.",
+      "CHARGE_CURRENCY_CHARGE": "ISO 3-letter currency code in which the fee was defined in the tariff.",
+      "CHARGE_AMOUNT_CHARGE": "Fee amount in the tariff currency.",
+      "SOURCE_ID": "Origin transaction_id when triggered by a financial message."
+    },
+    "foreign_keys": [
+      {"column": "ACCOUNT_NO", "references": "ACCOUNTS.ACCOUNT_NO"},
+      {"column": "MERCHANT_ID", "references": "MERCHANTS.MERCHANT_ID", "notes": "Surrogate numeric key, NOT the VARCHAR MERCHANT_IDN used by CARD_TRANSACTIONS."},
+      {"column": "DEVICE_ID", "references": "DEVICE.DEVICE_ID", "notes": "NULL when the fee is merchant-level. DEV: all device-level. Target table (DEVICE) is not yet in this descriptions file."},
+      {"column": "EVENT_IDN", "references": "CHARGE_EVENT_TYPES.EVENT_IDN", "notes": "Target table (CHARGE_EVENT_TYPES) is not yet in this descriptions file."},
+      {"column": "SOURCE_ID", "references": "CARD_TRANSACTIONS.TRANSACTION_ID", "notes": "Conditional: populated only when the fee was triggered by a financial message."}
+    ]
   },
   "CARD_REASON_CLOSE": {
     "description": "Card-closure reason taxonomy (BG). Two-column lookup: CLOSE_REASON_ID (VARCHAR2(2)) -> REASON_TEXT (Bulgarian). Joined from CARDS.REASON_CLOSE_ID. Note: ~50% of closed cards in DEV have NULL REASON_CLOSE_ID - bucket as '(none specified)' on display.",

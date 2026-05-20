@@ -55,7 +55,6 @@ Thumbs.db
 *.override.yml
 
 # Local scratch notes (personal, not for commit)
-Евентуални проблеми с banking-mcp.txt
 NOTES.local.*
 *.scratch.txt
 
