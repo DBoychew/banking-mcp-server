@@ -146,6 +146,45 @@
           {"name": "to_date",   "type": "string", "description": "Exclusive end, YYYY-MM-DD."}
         ],
         "returns": "DataFrame: DIRECTION (I/O), STATUS (BG text), FILES_COUNT, DAYS_OBSERVED."
+      },
+      "active_cards_by_office": {
+        "description": "UC-05. Active cards (CARDS.STATUS='2') distributed by issuing office. Joins CARDS.OFFICE_OWNER_ID -> OFFICES.OFFICE_ID. Use for 'cards per branch / regional distribution' questions. Cards without an office_owner (rare) are bucketed as '(no office)'. Ordered by ACTIVE_CARDS desc; top N.",
+        "sql": "SELECT NVL(o.NAME,'(no office)') AS OFFICE_NAME, COUNT(*) AS ACTIVE_CARDS FROM CARDS c LEFT JOIN OFFICES o ON o.OFFICE_ID = c.OFFICE_OWNER_ID WHERE c.STATUS = '2' GROUP BY o.NAME ORDER BY ACTIVE_CARDS DESC FETCH FIRST :n ROWS ONLY",
+        "params": [
+          {"name": "n", "type": "int", "default": 10, "description": "Number of top offices to return."}
+        ],
+        "returns": "DataFrame: OFFICE_NAME, ACTIVE_CARDS."
+      },
+      "auth_latency_p95_daily": {
+        "description": "UC-02. Daily bank-side authorization processing latency from CARD_AUTHORIZATIONS. Measures the interval between TIME_STAMP (auth record received - 'точно време на постъпване в базата') and SEND_DATE (response message sent towards BORICA - 'дата на която е изпратено съобщението към BORIKA'). NOT the full round-trip auth latency seen at the POS - this is the internal pipeline portion only. Returns per-day count + P50/P95/P99 latency in seconds (PERCENTILE_CONT) + MAX. Rows with SEND_DATE IS NULL (~0.0004% of rows in DEV) are excluded. Note (DEV): table is populated from 2023-01-03 to 2023-11-10; pick a window inside that range. Outliers (MAX_SEC >> P99_SEC) usually indicate batch-resent or stuck records, not real-time auth latency.",
+        "sql": "WITH lat AS (SELECT TRUNC(TIME_STAMP) AS AUTH_DATE, (EXTRACT(DAY FROM (SEND_DATE - TIME_STAMP))*86400 + EXTRACT(HOUR FROM (SEND_DATE - TIME_STAMP))*3600 + EXTRACT(MINUTE FROM (SEND_DATE - TIME_STAMP))*60 + EXTRACT(SECOND FROM (SEND_DATE - TIME_STAMP))) AS LAT_SEC FROM CARD_AUTHORIZATIONS WHERE TIME_STAMP >= TO_DATE(:from_date,'YYYY-MM-DD') AND TIME_STAMP <  TO_DATE(:to_date,'YYYY-MM-DD') AND SEND_DATE IS NOT NULL) SELECT TO_CHAR(AUTH_DATE,'YYYY-MM-DD') AS AUTH_DATE, COUNT(*) AS N, ROUND(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY LAT_SEC),3) AS P50_SEC, ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY LAT_SEC),3) AS P95_SEC, ROUND(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY LAT_SEC),3) AS P99_SEC, ROUND(MAX(LAT_SEC),3) AS MAX_SEC FROM lat GROUP BY AUTH_DATE ORDER BY AUTH_DATE DESC FETCH FIRST :n ROWS ONLY",
+        "params": [
+          {"name": "from_date", "type": "string", "description": "Inclusive start of the window, YYYY-MM-DD."},
+          {"name": "to_date",   "type": "string", "description": "Exclusive end of the window, YYYY-MM-DD."},
+          {"name": "n",         "type": "int",    "default": 10, "description": "Number of most recent days to return."}
+        ],
+        "returns": "DataFrame: AUTH_DATE, N, P50_SEC, P95_SEC, P99_SEC, MAX_SEC."
+      },
+      "portfolio_churn_rate_period": {
+        "description": "UC-05. Per-product card churn rate for a date range. Denominator = active at start of period (cards with OPEN_DATE < from_date AND (STATUS='2' OR STATUS_DATE >= from_date) - i.e. cards that existed and were not yet closed at from_date). Numerator = cards closed during the window (STATUS='3' AND STATUS_DATE in [from_date, to_date)). CHURN_PCT = closed / active_at_start * 100. Top N products by ACTIVE_AT_START. Note (DEV): closed-card history exists only from 2023 onwards; pick a window inside 2023-2024 for non-zero churn.",
+        "sql": "SELECT cp.NAME AS PRODUCT_NAME, SUM(CASE WHEN c.OPEN_DATE < TO_DATE(:from_date,'YYYY-MM-DD') AND (c.STATUS = '2' OR c.STATUS_DATE >= TO_DATE(:from_date,'YYYY-MM-DD')) THEN 1 ELSE 0 END) AS ACTIVE_AT_START, SUM(CASE WHEN c.STATUS = '3' AND c.STATUS_DATE >= TO_DATE(:from_date,'YYYY-MM-DD') AND c.STATUS_DATE < TO_DATE(:to_date,'YYYY-MM-DD') THEN 1 ELSE 0 END) AS CLOSED_IN_PERIOD, ROUND(SUM(CASE WHEN c.STATUS = '3' AND c.STATUS_DATE >= TO_DATE(:from_date,'YYYY-MM-DD') AND c.STATUS_DATE < TO_DATE(:to_date,'YYYY-MM-DD') THEN 1 ELSE 0 END) / NULLIF(SUM(CASE WHEN c.OPEN_DATE < TO_DATE(:from_date,'YYYY-MM-DD') AND (c.STATUS = '2' OR c.STATUS_DATE >= TO_DATE(:from_date,'YYYY-MM-DD')) THEN 1 ELSE 0 END),0) * 100, 2) AS CHURN_PCT FROM CARDS c LEFT JOIN CARD_PRODUCTS cp ON cp.PRODUCT_ID = c.PRODUCT_ID GROUP BY cp.NAME ORDER BY ACTIVE_AT_START DESC FETCH FIRST :n ROWS ONLY",
+        "params": [
+          {"name": "from_date", "type": "string", "description": "Inclusive start of the window, YYYY-MM-DD."},
+          {"name": "to_date",   "type": "string", "description": "Exclusive end of the window, YYYY-MM-DD."},
+          {"name": "n",         "type": "int",    "default": 10, "description": "Number of top products to return."}
+        ],
+        "returns": "DataFrame: PRODUCT_NAME, ACTIVE_AT_START, CLOSED_IN_PERIOD, CHURN_PCT."
+      },
+      "approval_rate_period_compare": {
+        "description": "UC-02. Authorization approval-rate comparison between two date windows, broken down by channel (ATM / Contactless / POS). Same A/N selection rules as approval_rate_by_channel_daily ('D' settlement and 'B' journal rows excluded). Channel classification: POS_ENTRY_MODE LIKE '07%' = Contactless; else MERCHANT_TYPE='6011' = ATM; else POS. Returns one row per channel with: current/previous approved & declined counts, current/previous approval rate, and the delta in percentage points (CURR_RATE - PREV_RATE). Caller controls both windows so it works for week-over-week, month-over-month, or any custom compare. DEV window: STG_TRANSACTIONS_BORICA_EO is populated through 2023; pick both windows inside that range.",
+        "sql": "WITH classified AS (SELECT CASE WHEN POS_ENTRY_MODE LIKE '07%' THEN 'Contactless' WHEN MERCHANT_TYPE = '6011' THEN 'ATM' ELSE 'POS' END AS CHANNEL, TRANSACTION_CODE, CASE WHEN TIME_STAMP >= TO_DATE(:current_from,'YYYY-MM-DD') AND TIME_STAMP <  TO_DATE(:current_to,'YYYY-MM-DD') THEN 'CURRENT' WHEN TIME_STAMP >= TO_DATE(:previous_from,'YYYY-MM-DD') AND TIME_STAMP <  TO_DATE(:previous_to,'YYYY-MM-DD') THEN 'PREVIOUS' END AS PERIOD FROM STG_TRANSACTIONS_BORICA_EO WHERE TRANSACTION_CODE IN ('A','N') AND TIME_STAMP IS NOT NULL AND ((TIME_STAMP >= TO_DATE(:current_from,'YYYY-MM-DD') AND TIME_STAMP <  TO_DATE(:current_to,'YYYY-MM-DD')) OR (TIME_STAMP >= TO_DATE(:previous_from,'YYYY-MM-DD') AND TIME_STAMP <  TO_DATE(:previous_to,'YYYY-MM-DD')))), agg AS (SELECT CHANNEL, PERIOD, SUM(CASE WHEN TRANSACTION_CODE='A' THEN 1 ELSE 0 END) AS APPR, SUM(CASE WHEN TRANSACTION_CODE='N' THEN 1 ELSE 0 END) AS DECL FROM classified GROUP BY CHANNEL, PERIOD), pivoted AS (SELECT CHANNEL, SUM(CASE WHEN PERIOD='CURRENT'  THEN APPR ELSE 0 END) AS CURR_APPR, SUM(CASE WHEN PERIOD='CURRENT'  THEN DECL ELSE 0 END) AS CURR_DECL, SUM(CASE WHEN PERIOD='PREVIOUS' THEN APPR ELSE 0 END) AS PREV_APPR, SUM(CASE WHEN PERIOD='PREVIOUS' THEN DECL ELSE 0 END) AS PREV_DECL FROM agg GROUP BY CHANNEL) SELECT CHANNEL, CURR_APPR, CURR_DECL, ROUND(CURR_APPR / NULLIF(CURR_APPR+CURR_DECL,0) * 100, 2) AS CURR_RATE, PREV_APPR, PREV_DECL, ROUND(PREV_APPR / NULLIF(PREV_APPR+PREV_DECL,0) * 100, 2) AS PREV_RATE, ROUND(CURR_APPR / NULLIF(CURR_APPR+CURR_DECL,0) * 100 - PREV_APPR / NULLIF(PREV_APPR+PREV_DECL,0) * 100, 2) AS RATE_DELTA_PP FROM pivoted ORDER BY CHANNEL",
+        "params": [
+          {"name": "current_from",  "type": "string", "description": "Current window: inclusive start, YYYY-MM-DD."},
+          {"name": "current_to",    "type": "string", "description": "Current window: exclusive end, YYYY-MM-DD."},
+          {"name": "previous_from", "type": "string", "description": "Previous (compare) window: inclusive start, YYYY-MM-DD."},
+          {"name": "previous_to",   "type": "string", "description": "Previous (compare) window: exclusive end, YYYY-MM-DD."}
+        ],
+        "returns": "DataFrame: CHANNEL, CURR_APPR, CURR_DECL, CURR_RATE, PREV_APPR, PREV_DECL, PREV_RATE, RATE_DELTA_PP."
       }
     }
   }
