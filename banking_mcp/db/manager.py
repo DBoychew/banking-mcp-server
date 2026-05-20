@@ -726,6 +726,251 @@ class DatabaseManager:
         finally:
             _close_quietly(db_conn)
 
+    def get_table_keys(
+        self, connection: str | None = None, table_name: str = ""
+    ) -> dict:
+        """Return PK + FK metadata for one table (Oracle only).
+
+        Shape:
+            {
+              "primary_key": {"name": str, "columns": list[str]} | None,
+              "foreign_keys": [
+                  {"name": str, "columns": list[str],
+                   "references": {"owner": str | None, "table": str, "columns": list[str]},
+                   "delete_rule": str | None},
+                  ...
+              ],
+            }
+
+        Returns {} for non-Oracle connections. Sourced from ALL_CONSTRAINTS /
+        ALL_CONS_COLUMNS (or USER_* when no schema is configured).
+        """
+        conn_name = connection or get_default_connection()
+        if not conn_name:
+            raise ValueError("No connection specified and no default connection configured")
+        conn_info = get_connection(conn_name)
+        if not conn_info:
+            raise ValueError(f"Connection '{conn_name}' not found")
+        if conn_info.get("db_type", "").lower() != "oracle":
+            return {}
+
+        schema_name = _get_oracle_schema(conn_info)
+        db_conn = _open_connection(conn_info)
+        try:
+            if schema_name:
+                pk_sql = """
+                    SELECT c.constraint_name, cc.column_name
+                    FROM all_constraints c
+                    JOIN all_cons_columns cc
+                      ON c.owner = cc.owner
+                     AND c.constraint_name = cc.constraint_name
+                    WHERE c.constraint_type = 'P'
+                      AND c.owner = :owner
+                      AND c.table_name = :t
+                    ORDER BY cc.position
+                """
+                fk_sql = """
+                    SELECT fk.constraint_name, fkc.column_name,
+                           pk.owner, pk.table_name, pkc.column_name, fk.delete_rule
+                    FROM all_constraints fk
+                    JOIN all_cons_columns fkc
+                      ON fk.owner = fkc.owner
+                     AND fk.constraint_name = fkc.constraint_name
+                    JOIN all_constraints pk
+                      ON fk.r_owner = pk.owner
+                     AND fk.r_constraint_name = pk.constraint_name
+                    JOIN all_cons_columns pkc
+                      ON pk.owner = pkc.owner
+                     AND pk.constraint_name = pkc.constraint_name
+                     AND pkc.position = fkc.position
+                    WHERE fk.constraint_type = 'R'
+                      AND fk.owner = :owner
+                      AND fk.table_name = :t
+                    ORDER BY fk.constraint_name, fkc.position
+                """
+                params = {"owner": schema_name, "t": table_name.upper()}
+            else:
+                pk_sql = """
+                    SELECT c.constraint_name, cc.column_name
+                    FROM user_constraints c
+                    JOIN user_cons_columns cc
+                      ON c.constraint_name = cc.constraint_name
+                    WHERE c.constraint_type = 'P'
+                      AND c.table_name = :t
+                    ORDER BY cc.position
+                """
+                fk_sql = """
+                    SELECT fk.constraint_name, fkc.column_name,
+                           NULL, pk.table_name, pkc.column_name, fk.delete_rule
+                    FROM user_constraints fk
+                    JOIN user_cons_columns fkc
+                      ON fk.constraint_name = fkc.constraint_name
+                    JOIN user_constraints pk
+                      ON fk.r_constraint_name = pk.constraint_name
+                    JOIN user_cons_columns pkc
+                      ON pk.constraint_name = pkc.constraint_name
+                     AND pkc.position = fkc.position
+                    WHERE fk.constraint_type = 'R'
+                      AND fk.table_name = :t
+                    ORDER BY fk.constraint_name, fkc.position
+                """
+                params = {"t": table_name.upper()}
+
+            _, pk_rows = _run_select(conn_info, db_conn, pk_sql, params)
+            _, fk_rows = _run_select(conn_info, db_conn, fk_sql, params)
+        finally:
+            _close_quietly(db_conn)
+
+        primary_key: dict | None = None
+        if pk_rows:
+            primary_key = {
+                "name": pk_rows[0][0],
+                "columns": [row[1] for row in pk_rows],
+            }
+
+        fk_map: dict[str, dict] = {}
+        for cname, child_col, r_owner, r_table, r_col, delete_rule in fk_rows:
+            entry = fk_map.setdefault(
+                cname,
+                {
+                    "name": cname,
+                    "columns": [],
+                    "references": {"owner": r_owner, "table": r_table, "columns": []},
+                    "delete_rule": delete_rule,
+                },
+            )
+            entry["columns"].append(child_col)
+            entry["references"]["columns"].append(r_col)
+
+        return {
+            "primary_key": primary_key,
+            "foreign_keys": list(fk_map.values()),
+        }
+
+    def get_schema_keys(self, connection: str | None = None) -> dict:
+        """Return PK + FK graph for the whole schema (Oracle only).
+
+        Shape:
+            {
+              "primary_keys": {TABLE: {"name": str, "columns": list[str]}, ...},
+              "foreign_keys": [
+                  {"name": str, "table": str, "columns": list[str],
+                   "references": {"owner": str | None, "table": str, "columns": list[str]},
+                   "delete_rule": str | None},
+                  ...
+              ],
+            }
+
+        Returns {} for non-Oracle. Honours the connection's schema_filter so
+        excluded tables don't appear in either map.
+        """
+        conn_name = connection or get_default_connection()
+        if not conn_name:
+            raise ValueError("No connection specified and no default connection configured")
+        conn_info = get_connection(conn_name)
+        if not conn_info:
+            raise ValueError(f"Connection '{conn_name}' not found")
+        if conn_info.get("db_type", "").lower() != "oracle":
+            return {}
+
+        schema_name = _get_oracle_schema(conn_info)
+        db_conn = _open_connection(conn_info)
+        try:
+            if schema_name:
+                pk_sql = """
+                    SELECT c.table_name, c.constraint_name, cc.column_name
+                    FROM all_constraints c
+                    JOIN all_cons_columns cc
+                      ON c.owner = cc.owner
+                     AND c.constraint_name = cc.constraint_name
+                    WHERE c.constraint_type = 'P'
+                      AND c.owner = :owner
+                    ORDER BY c.table_name, cc.position
+                """
+                fk_sql = """
+                    SELECT fk.table_name, fk.constraint_name, fkc.column_name,
+                           pk.owner, pk.table_name, pkc.column_name, fk.delete_rule
+                    FROM all_constraints fk
+                    JOIN all_cons_columns fkc
+                      ON fk.owner = fkc.owner
+                     AND fk.constraint_name = fkc.constraint_name
+                    JOIN all_constraints pk
+                      ON fk.r_owner = pk.owner
+                     AND fk.r_constraint_name = pk.constraint_name
+                    JOIN all_cons_columns pkc
+                      ON pk.owner = pkc.owner
+                     AND pk.constraint_name = pkc.constraint_name
+                     AND pkc.position = fkc.position
+                    WHERE fk.constraint_type = 'R'
+                      AND fk.owner = :owner
+                    ORDER BY fk.table_name, fk.constraint_name, fkc.position
+                """
+                params: dict[str, Any] | None = {"owner": schema_name}
+            else:
+                pk_sql = """
+                    SELECT c.table_name, c.constraint_name, cc.column_name
+                    FROM user_constraints c
+                    JOIN user_cons_columns cc
+                      ON c.constraint_name = cc.constraint_name
+                    WHERE c.constraint_type = 'P'
+                    ORDER BY c.table_name, cc.position
+                """
+                fk_sql = """
+                    SELECT fk.table_name, fk.constraint_name, fkc.column_name,
+                           NULL, pk.table_name, pkc.column_name, fk.delete_rule
+                    FROM user_constraints fk
+                    JOIN user_cons_columns fkc
+                      ON fk.constraint_name = fkc.constraint_name
+                    JOIN user_constraints pk
+                      ON fk.r_constraint_name = pk.constraint_name
+                    JOIN user_cons_columns pkc
+                      ON pk.constraint_name = pkc.constraint_name
+                     AND pkc.position = fkc.position
+                    WHERE fk.constraint_type = 'R'
+                    ORDER BY fk.table_name, fk.constraint_name, fkc.position
+                """
+                params = None
+
+            _, pk_rows = _run_select(conn_info, db_conn, pk_sql, params)
+            _, fk_rows = _run_select(conn_info, db_conn, fk_sql, params)
+        finally:
+            _close_quietly(db_conn)
+
+        schema_filter = conn_info.get("schema_filter", {"include": [], "exclude": []})
+
+        pk_by_table: dict[str, dict] = {}
+        for table, cname, col in pk_rows:
+            entry = pk_by_table.setdefault(table, {"name": cname, "columns": []})
+            entry["columns"].append(col)
+
+        fk_groups: dict[tuple[str, str], dict] = {}
+        for table, cname, child_col, r_owner, r_table, r_col, delete_rule in fk_rows:
+            key = (table, cname)
+            entry = fk_groups.setdefault(
+                key,
+                {
+                    "name": cname,
+                    "table": table,
+                    "columns": [],
+                    "references": {"owner": r_owner, "table": r_table, "columns": []},
+                    "delete_rule": delete_rule,
+                },
+            )
+            entry["columns"].append(child_col)
+            entry["references"]["columns"].append(r_col)
+
+        all_tables = set(pk_by_table) | {fk["table"] for fk in fk_groups.values()}
+        allowed = set(filter_tables(sorted(all_tables), schema_filter))
+
+        return {
+            "primary_keys": {
+                t: pk_by_table[t] for t in sorted(pk_by_table) if t in allowed
+            },
+            "foreign_keys": [
+                fk for fk in fk_groups.values() if fk["table"] in allowed
+            ],
+        }
+
     @staticmethod
     def _parse_column_list(cols_str: str) -> list[dict]:
         """Parse 'COL1(type1), COL2(type2(sub))' handling nested parens in types."""

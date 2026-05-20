@@ -49,8 +49,62 @@ def test_db_tools_registered(registered_tools):
         "get_database_context",
         "get_database_table_list",
         "get_table_info",
+        "get_table_keys",
+        "get_database_keys",
         "execute_code",
     }
+
+
+def test_get_table_keys_tool_uses_default_connection(registered_tools):
+    fake_mcp, db = registered_tools
+    db.get_table_keys.return_value = {
+        "primary_key": {"name": "PK_CARDS", "columns": ["CARD_ID"]},
+        "foreign_keys": [],
+    }
+    out = json.loads(fake_mcp.tools["get_table_keys"]("cards", ""))
+    assert out["connection"] == "scards"
+    assert out["primary_key"]["columns"] == ["CARD_ID"]
+    db.get_table_keys.assert_called_with("scards", "cards")
+
+
+def test_get_table_keys_tool_returns_error_on_exception(registered_tools):
+    fake_mcp, db = registered_tools
+    db.get_table_keys.side_effect = ValueError("nope")
+    out = json.loads(fake_mcp.tools["get_table_keys"]("cards", "missing"))
+    assert out["error"] == "nope"
+
+
+def test_get_table_keys_tool_handles_no_default(registered_tools):
+    fake_mcp, db = registered_tools
+    db.get_default_connection.return_value = None
+    out = json.loads(fake_mcp.tools["get_table_keys"]("cards", ""))
+    assert "error" in out
+
+
+def test_get_database_keys_tool_uses_default_connection(registered_tools):
+    fake_mcp, db = registered_tools
+    db.get_schema_keys.return_value = {
+        "primary_keys": {"ACCOUNTS": {"name": "PK_ACC", "columns": ["ID"]}},
+        "foreign_keys": [],
+    }
+    out = json.loads(fake_mcp.tools["get_database_keys"](""))
+    assert out["connection"] == "scards"
+    assert "ACCOUNTS" in out["primary_keys"]
+    db.get_schema_keys.assert_called_with("scards")
+
+
+def test_get_database_keys_tool_returns_error_on_exception(registered_tools):
+    fake_mcp, db = registered_tools
+    db.get_schema_keys.side_effect = RuntimeError("connection refused")
+    out = json.loads(fake_mcp.tools["get_database_keys"]("scards"))
+    assert out["error"] == "connection refused"
+
+
+def test_get_database_keys_tool_handles_no_default(registered_tools):
+    fake_mcp, db = registered_tools
+    db.get_default_connection.return_value = None
+    out = json.loads(fake_mcp.tools["get_database_keys"](""))
+    assert "error" in out
 
 
 def test_list_databases_returns_json(registered_tools):

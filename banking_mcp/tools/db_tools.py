@@ -6,6 +6,8 @@ Exposes:
   get_database_context()      -> schema + domain queries for LLM context
   get_database_table_list()   -> table names only (lightweight alternative)
   get_table_info()            -> columns + types for one table
+  get_table_keys()            -> primary key + foreign keys for one table (Oracle)
+  get_database_keys()         -> whole-schema PK + FK graph (Oracle)
   execute_code()              -> Python sandbox with BankingToolsAPI
 """
 
@@ -156,6 +158,57 @@ def register_db_tools(mcp) -> None:
                     "columns": columns,
                 },
                 indent=2,
+            )
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    @mcp.tool(
+        description=(
+            "Get primary key and foreign key metadata for a single table (Oracle only). "
+            "Returns {primary_key, foreign_keys}; each FK has child columns, the referenced "
+            "table/columns, and the delete rule. Use this alongside get_table_info when "
+            "planning joins. Returns {} for non-Oracle connections. Sourced from "
+            "ALL_CONSTRAINTS / ALL_CONS_COLUMNS (or USER_* when no schema is configured)."
+        )
+    )
+    def get_table_keys(table_name: str, connection: str = "") -> str:
+        db = get_manager()
+        conn = connection or db.get_default_connection()
+        if not conn:
+            return json.dumps(
+                {"error": "No connection specified and no default connection configured"}
+            )
+        try:
+            keys = db.get_table_keys(conn, table_name)
+            return json.dumps(
+                {"connection": conn, "table": table_name, **keys},
+                indent=2,
+                default=str,
+            )
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    @mcp.tool(
+        description=(
+            "Get the full primary-key and foreign-key graph for a database (Oracle only). "
+            "Returns {primary_keys: {TABLE: {...}}, foreign_keys: [{table, columns, references, ...}]}. "
+            "Use this to discover join paths across the schema (e.g. which tables link to ACCOUNTS) "
+            "before writing SQL. Honours the connection's schema_filter. Returns {} for non-Oracle."
+        )
+    )
+    def get_database_keys(connection: str = "") -> str:
+        db = get_manager()
+        conn = connection or db.get_default_connection()
+        if not conn:
+            return json.dumps(
+                {"error": "No connection specified and no default connection configured"}
+            )
+        try:
+            keys = db.get_schema_keys(conn)
+            return json.dumps(
+                {"connection": conn, **keys},
+                indent=2,
+                default=str,
             )
         except Exception as exc:
             return json.dumps({"error": str(exc)})
